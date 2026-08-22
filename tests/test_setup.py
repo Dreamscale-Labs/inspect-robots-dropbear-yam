@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from dropbear_yam.config import load_rig
+from dropbear_yam.errors import UserFacingError
 from dropbear_yam.setup_command import SetupDependencies, discover_cameras, setup
 
 
@@ -14,6 +17,7 @@ def test_setup_prompts_only_for_unavoidable_assignments_and_geometry(isolated_pa
             "3",  # top, left, right cameras
             "1",
             "2",  # left and right CAN
+            "y",  # opt in to predictive collision geometry
             "-0.25 0 0",
             "0.25 0 0",
             "0",
@@ -48,8 +52,57 @@ def test_setup_prompts_only_for_unavoidable_assignments_and_geometry(isolated_pa
         "/dev/v4l/by-id/cam-c",
     )
     assert (rig.left_channel, rig.right_channel) == ("can0", "can1")
+    assert rig.collision_guardrail is True
     assert login_calls == [True]
-    assert len(prompts) == 10
+    assert len(prompts) == 11
+
+
+def test_setup_explains_and_allows_skipping_collision_geometry(isolated_paths: Path) -> None:
+    answers = iter(["1", "2", "3", "1", "2", "n"])
+    prompts: list[str] = []
+    output: list[str] = []
+    deps = SetupDependencies(
+        discover_cameras=lambda: [
+            "/dev/v4l/by-id/cam-a",
+            "/dev/v4l/by-id/cam-b",
+            "/dev/v4l/by-id/cam-c",
+        ],
+        discover_can=lambda: ["can0", "can1"],
+        authenticated=lambda: True,
+        login=lambda: None,
+        input=lambda prompt: (prompts.append(prompt), next(answers))[1],
+        output=output.append,
+    )
+
+    rig = load_rig(setup(deps=deps))
+
+    assert rig.collision_guardrail is False
+    assert rig.collision_table is False
+    assert rig.collision_left_base_pos is None
+    assert rig.collision_right_base_pos is None
+    assert rig.collision_table_height is None
+    assert len(prompts) == 6
+    explanation = "\n".join(output)
+    assert "optional" in explanation.lower()
+    assert "left and right arm-base x y z" in explanation.lower()
+    assert "predictive collision" in explanation.lower()
+
+
+def test_setup_camera_failure_is_plain_and_actionable(isolated_paths: Path) -> None:
+    deps = SetupDependencies(
+        discover_cameras=lambda: [],
+        discover_can=lambda: ["can0", "can1"],
+        authenticated=lambda: True,
+        login=lambda: None,
+        input=lambda _prompt: "",
+        output=lambda _line: None,
+    )
+
+    with pytest.raises(UserFacingError) as caught:
+        setup(deps=deps)
+
+    assert "found 0 usable color cameras" in str(caught.value)
+    assert "Connect and power" in caught.value.next_step
 
 
 def test_setup_is_idempotent_and_does_not_prompt_when_rig_exists(rig, isolated_paths: Path) -> None:

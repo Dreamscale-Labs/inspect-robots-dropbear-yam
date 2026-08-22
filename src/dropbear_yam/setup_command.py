@@ -13,6 +13,7 @@ from typing import Any
 from dropbear.config import load_config
 
 from dropbear_yam.config import RigConfig, load_rig, rig_path, rig_profiles, save_rig
+from dropbear_yam.errors import UserFacingError
 
 _USB_PORT = re.compile(r"(?:^|/)(\d+-\d+(?:\.\d+)*)(?=[:/]|$)")
 
@@ -207,7 +208,13 @@ def _authenticated() -> bool:
 
 
 def _login() -> None:
-    subprocess.run(["dropbear", "login"], check=True)
+    try:
+        subprocess.run(["dropbear", "login"], check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise UserFacingError(
+            f"Dropbear login did not finish: {exc}",
+            "Run `dropbear login` directly, complete sign-in, then rerun ./setup.sh",
+        ) from exc
 
 
 @dataclass
@@ -230,7 +237,10 @@ def _select(
 ) -> str:
     available = [candidate for candidate in candidates if candidate not in used]
     if not available:
-        raise RuntimeError(f"no unassigned candidates remain for {label}")
+        raise UserFacingError(
+            f"There is no unused device available for {label}",
+            "Connect the missing device, then rerun ./setup.sh",
+        )
     output(f"Assign {label}:")
     for index, candidate in enumerate(candidates, 1):
         suffix = " (already assigned)" if candidate in used else ""
@@ -255,6 +265,25 @@ def _float(prompt: str, input_fn: Callable[[str], str], output: Callable[[str], 
             return float(input_fn(prompt).strip())
         except ValueError:
             output("Enter one number in metres or radians as labelled.")
+
+
+def _yes_no(
+    prompt: str,
+    *,
+    default: bool,
+    input_fn: Callable[[str], str],
+    output: Callable[[str], None],
+) -> bool:
+    suffix = "[Y/n]" if default else "[y/N]"
+    while True:
+        answer = input_fn(f"{prompt} {suffix} ").strip().lower()
+        if not answer:
+            return default
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        output("Please answer y or n.")
 
 
 def _xyz(
@@ -316,14 +345,18 @@ def setup(
 
     cameras = deps.discover_cameras()
     if len(cameras) < 3:
-        raise RuntimeError(
-            "need three distinct color cameras with stable RealSense serial, "
-            "/dev/v4l/by-id, or /dev/v4l/by-path identities; detected "
-            f"{len(cameras)}"
+        raise UserFacingError(
+            f"Setup found {len(cameras)} usable color cameras, but the YAM rig needs three",
+            "Connect and power the top camera and both wrist cameras, close any program using "
+            "them, check `v4l2-ctl --list-devices`, then rerun ./setup.sh",
         )
     channels = deps.discover_can()
     if len(channels) < 2:
-        raise RuntimeError("need two SocketCAN interfaces; bring up both CAN adapters first")
+        raise UserFacingError(
+            f"Setup found {len(channels)} CAN interfaces, but the two YAM arms need two",
+            "Connect both CAN adapters, bring both interfaces UP, check "
+            "`ip -details link show type can`, then rerun ./setup.sh",
+        )
 
     used_cameras: set[str] = set()
     top = _select("top camera", cameras, used_cameras, input_fn=deps.input, output=deps.output)
@@ -341,12 +374,48 @@ def setup(
         "right arm CAN", channels, used_channels, input_fn=deps.input, output=deps.output
     )
 
-    deps.output("Enter measured collision geometry in the shared rig coordinate frame.")
-    left_pos = _xyz("Left arm base x y z (m): ", deps.input, deps.output)
-    right_pos = _xyz("Right arm base x y z (m): ", deps.input, deps.output)
-    left_yaw = _float("Left arm base yaw (rad): ", deps.input, deps.output)
-    right_yaw = _float("Right arm base yaw (rad): ", deps.input, deps.output)
-    table_height = _float("Table top height z (m): ", deps.input, deps.output)
+    deps.output("")
+    deps.output("Optional: predictive collision checking can reject a target before it is sent.")
+    deps.output("If you enable it, you will enter these five measurements in one rig frame:")
+    deps.output("  - left and right arm-base x y z positions (metres)")
+    deps.output("  - left and right arm-base yaw angles (radians)")
+    deps.output("  - table-top z height (metres)")
+    configure_collision = _yes_no(
+        "Configure predictive collision geometry now?",
+        default=False,
+        input_fn=deps.input,
+        output=deps.output,
+    )
+    geometry: dict[str, Any]
+    if configure_collision:
+        geometry = {
+            "collision_guardrail": True,
+            "collision_table": True,
+            "collision_left_base_pos": _xyz(
+                "Left arm base x y z (m): ", deps.input, deps.output
+            ),
+            "collision_right_base_pos": _xyz(
+                "Right arm base x y z (m): ", deps.input, deps.output
+            ),
+            "collision_left_base_yaw": _float(
+                "Left arm base yaw (rad): ", deps.input, deps.output
+            ),
+            "collision_right_base_yaw": _float(
+                "Right arm base yaw (rad): ", deps.input, deps.output
+            ),
+            "collision_table_height": _float(
+                "Table top height z (m): ", deps.input, deps.output
+            ),
+        }
+    else:
+        geometry = {
+            "collision_guardrail": False,
+            "collision_table": False,
+        }
+        deps.output(
+            "Predictive collision checking is off. Joint bounds and strict per-action jump "
+            "limits remain on."
+        )
 
     rig = RigConfig(
         top_camera=top,
@@ -354,11 +423,7 @@ def setup(
         right_camera=right_camera,
         left_channel=left_channel,
         right_channel=right_channel,
-        collision_left_base_pos=left_pos,
-        collision_right_base_pos=right_pos,
-        collision_left_base_yaw=left_yaw,
-        collision_right_base_yaw=right_yaw,
-        collision_table_height=table_height,
+        **geometry,
     )
     saved = save_rig(rig, path=path, replace=reconfigure)
     if not deps.authenticated():

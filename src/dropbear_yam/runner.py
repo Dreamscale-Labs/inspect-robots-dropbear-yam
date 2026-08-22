@@ -8,6 +8,8 @@ import hashlib
 import json
 import os
 import signal
+import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
@@ -24,6 +26,7 @@ from inspect_robots.types import Action, Observation
 from dropbear_yam.config import RigConfig, state_home
 from dropbear_yam.doctor import DoctorReport
 from dropbear_yam.doctor import doctor as run_doctor
+from dropbear_yam.errors import emit_error
 
 
 def default_lock_path() -> Path:
@@ -151,8 +154,54 @@ def cleanup_session(session_id: str | None) -> CleanupResult:
 
 
 def _confirm(prompt: str) -> bool:
-    answer = input(f"{prompt}\nType CONNECT to continue: ").strip()
-    return answer == "CONNECT"
+    while True:
+        answer = input(f"{prompt}\nContinue? [Y/n] ").strip().lower()
+        if answer in {"", "y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        print("Please answer y or n.")
+
+
+@contextlib.contextmanager
+def _loading_status(message: str) -> Iterator[None]:
+    """Show continuous startup progress so a slow compute allocation never looks frozen."""
+    frames = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+    started = time.monotonic()
+    stopped = threading.Event()
+    interactive = sys.stdout.isatty()
+
+    sys.stdout.write(f"\r{frames[0]} {message} — 0s waiting")
+    sys.stdout.flush()
+
+    def render() -> None:
+        frame = 1
+        while not stopped.is_set():
+            elapsed = int(time.monotonic() - started)
+            sys.stdout.write(f"\r{frames[frame % len(frames)]} {message} — {elapsed}s waiting")
+            sys.stdout.flush()
+            frame += 1
+            stopped.wait(0.1)
+
+    thread = threading.Thread(target=render, name="dropbear-yam-loading", daemon=True)
+    if interactive:
+        thread.start()
+    failed = False
+    try:
+        yield
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        stopped.set()
+        if interactive:
+            thread.join(timeout=1.0)
+        elapsed = int(time.monotonic() - started)
+        outcome = "stopped" if failed else "ready"
+        symbol = "!" if failed else "✓"
+        clear_line = "\033[2K" if interactive else ""
+        sys.stdout.write(f"\r{clear_line}{symbol} {message} {outcome} after {elapsed}s\n")
+        sys.stdout.flush()
 
 
 def _embodiment(rig: RigConfig) -> Any:
@@ -187,6 +236,7 @@ class RunDependencies:
     evaluate: Callable[..., Any] = _evaluate
     cleanup: Callable[[str | None], CleanupResult] = cleanup_session
     output: Callable[[str], None] = print
+    loading: Callable[[str], contextlib.AbstractContextManager[None]] = _loading_status
 
 
 @contextlib.contextmanager
@@ -212,12 +262,20 @@ def _shadow_observation(observation: Observation) -> Observation:
     return replace(observation, extra={**dict(observation.extra), "env_step": 0})
 
 
-def _strict_approver(embodiment: Any) -> ChainApprover:
+def _strict_approver(
+    embodiment: Any,
+    *,
+    collision_guardrail_enabled: bool,
+) -> ChainApprover:
+    if not collision_guardrail_enabled:
+        return ChainApprover()
     contribution = embodiment.contribute_guardrails(embodiment.info.action_space)
     if contribution.warnings:
         raise RuntimeError("; ".join(contribution.warnings))
     if not contribution.approvers:
-        raise RuntimeError("strict run requires the YAM predictive collision approver")
+        raise RuntimeError(
+            "Predictive collision checking was enabled, but its collision checker did not start"
+        )
     return ChainApprover(
         *(NonRewritingApprover(approver) for _name, approver in contribution.approvers)
     )
@@ -249,28 +307,41 @@ def run(
     *,
     deps: RunDependencies | None = None,
     lock_path: Path | None = None,
-    max_steps: int = 300,
+    max_steps: int = 3600,
     log_dir: Path | None = None,
 ) -> int:
     """Run doctor -> physical gate -> shadow -> attended eval -> exact cleanup."""
     deps = deps or RunDependencies()
     report = deps.doctor(rig)
     if not report.ok:
+        deps.output("Error: Doctor found problems that must be fixed before hardware can connect.")
         for check in report.checks:
             if check.status == "fail":
-                deps.output(f"{check.code}: {check.summary}")
+                deps.output(f"  [{check.code}] {check.summary}")
+                if check.remediation:
+                    deps.output(f"    Next: {check.remediation}")
+        deps.output("Next: Fix the failed checks above, then rerun ./dropbear-yam doctor.")
         return 2
     if not instruction.strip():
-        deps.output("task instruction must not be empty")
+        emit_error(
+            deps.output,
+            "The task instruction is empty",
+            "Repeat the command with a trained task, for example "
+            './dropbear-yam run "Pack container"',
+        )
         return 2
     if max_steps < 1:
-        deps.output("max_steps must be at least one")
+        emit_error(
+            deps.output,
+            "--max-steps must be at least 1",
+            "Repeat the command with --max-steps 3600 or another positive number",
+        )
         return 2
     if not deps.confirm(
         "E-stop must be in hand and working. Connecting I2RT will enable control "
         "traffic and calibrate both LINEAR_4310 grippers; keep clear of them."
     ):
-        deps.output("hardware connection cancelled")
+        deps.output("Cancelled: no YAM hardware connection was opened.")
         return 2
 
     embodiment: Any | None = None
@@ -281,14 +352,20 @@ def run(
         embodiment = deps.embodiment(rig)
         policy = deps.policy(rig)
         prepared = embodiment.prepare_observation(instruction)
-        approver = _strict_approver(embodiment)
+        approver = _strict_approver(
+            embodiment,
+            collision_guardrail_enabled=rig.collision_guardrail,
+        )
         digest = configuration_digest(rig, lock_path)
         if not _shadow_passed(digest):
-            deps.output("Running one paid, non-commanding shadow inference for this configuration.")
-            _run_shadow(instruction, prepared, embodiment, policy, digest)
+            deps.output("Running one non-commanding shadow inference for this configuration.")
+            with deps.loading("Starting Dropbear compute"):
+                _run_shadow(instruction, prepared, embodiment, policy, digest)
             deps.output(f"Shadow validation passed: {shadow_path(digest)}")
         else:
             deps.output("Shadow validation already passed for this exact configuration.")
+            with deps.loading("Starting Dropbear compute"):
+                policy.reset(Scene(id="startup", instruction=instruction))
 
         task = Task(
             name="jay-dreamzero-yam",
@@ -309,12 +386,35 @@ def run(
                 fail_on_error=True,
             )
         if not logs or any(getattr(item, "status", "error") != "success" for item in logs):
+            emit_error(
+                deps.output,
+                "Inspect Robots reported that the task did not finish successfully",
+                "Keep the robot stopped, review the run log under "
+                "~/.local/state/dropbear-yam/logs, then rerun doctor before another attempt",
+            )
             exit_code = 1
     except KeyboardInterrupt:
-        deps.output("operator stop received; closing hardware and Dropbear session")
+        deps.output("Operator stop received. Closing the YAM hardware and Dropbear session.")
         exit_code = 130
     except BaseException as exc:
-        deps.output(f"run aborted: {type(exc).__name__}: {exc}")
+        lowered = str(exc).lower()
+        if "collision" in lowered or "safety" in lowered or "joint" in lowered:
+            next_step = (
+                "Keep the robot stopped, check the scene and safety configuration, and only start "
+                "a new run when the cause is understood"
+            )
+        elif "camera" in lowered or "image" in lowered:
+            next_step = (
+                "Check camera power and USB connections, close other camera programs, then rerun "
+                "./dropbear-yam doctor"
+            )
+        else:
+            next_step = (
+                "Run ./dropbear-yam doctor; if it passes and this repeats, run "
+                "./dropbear-yam doctor --support-bundle ~/dropbear-yam-support.tar.gz and send "
+                "that file to Dreamscale"
+            )
+        emit_error(deps.output, f"The run stopped before completion: {exc}", next_step)
         exit_code = 1
     finally:
         if policy is not None:
@@ -325,19 +425,42 @@ def run(
             try:
                 resource.close()
             except BaseException as exc:
-                deps.output(f"{label} close failed: {exc}")
+                name = "YAM hardware" if label == "embodiment" else "Dropbear connection"
+                emit_error(
+                    deps.output,
+                    f"The {name} did not close cleanly: {exc}",
+                    "Keep the e-stop ready and do not begin another run until doctor reports no "
+                    "existing session",
+                )
                 exit_code = exit_code or 1
         try:
             cleanup = deps.cleanup(session_id)
         except BaseException as exc:
-            deps.output(f"Dropbear cleanup verification raised for {session_id}: {exc}")
+            emit_error(
+                deps.output,
+                f"Could not verify that Dropbear session {session_id or 'unknown'} ended: {exc}",
+                "Do not start another run; rerun doctor and contact Dreamscale if it lists "
+                "a session",
+            )
             exit_code = exit_code or 1
         else:
             if not cleanup.disappeared:
-                deps.output(f"Dropbear cleanup failed for {session_id}: {cleanup.detail}")
+                emit_error(
+                    deps.output,
+                    f"Dropbear session {session_id or 'unknown'} is still present: "
+                    f"{cleanup.detail}",
+                    "Do not start another run; rerun doctor and contact Dreamscale to stop this "
+                    "exact session",
+                )
                 exit_code = exit_code or 1
             elif cleanup.forced:
-                deps.output(f"Dropbear normal cleanup failed for {session_id}: {cleanup.detail}")
+                emit_error(
+                    deps.output,
+                    f"Dropbear session {session_id or 'unknown'} needed an explicit stop: "
+                    f"{cleanup.detail}",
+                    "Rerun doctor before another run and send a support bundle to Dreamscale if "
+                    "this happens again",
+                )
                 exit_code = exit_code or 1
             else:
                 deps.output(f"Dropbear cleanup verified for {session_id or 'no session'}")

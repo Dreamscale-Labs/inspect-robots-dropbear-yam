@@ -7,7 +7,8 @@ if [[ -z "$uv_bin" && -x "${HOME}/.local/bin/uv" ]]; then
   uv_bin="${HOME}/.local/bin/uv"
 fi
 if [[ -z "$uv_bin" ]]; then
-  echo "uv is missing; run $repo_dir/setup.sh first." >&2
+  echo "Error: uv is not installed, so dropbear-yam cannot start." >&2
+  echo "Next: Run $repo_dir/setup.sh first." >&2
   exit 2
 fi
 exec "$uv_bin" run --project "$repo_dir" --python 3.12 --locked --extra hardware dropbear-yam "$@"

@@ -123,6 +123,31 @@ def test_doctor_accepts_distinct_stable_mixed_camera_sources(rig) -> None:
     assert report.ok is True
 
 
+def test_doctor_warns_but_does_not_block_when_collision_geometry_was_skipped(rig) -> None:
+    from dropbear_yam.config import RigConfig
+
+    without_geometry = RigConfig(
+        **{
+            **rig.as_dict(),
+            "collision_guardrail": False,
+            "collision_table": False,
+            "collision_left_base_pos": None,
+            "collision_right_base_pos": None,
+            "collision_left_base_yaw": None,
+            "collision_right_base_yaw": None,
+            "collision_table_height": None,
+        }
+    )
+
+    report = doctor(without_geometry, deps=_deps(without_geometry))
+    geometry = {check.code: check for check in report.checks}["DBY-GEOMETRY"]
+
+    assert report.ok is True
+    assert geometry.status == "warn"
+    assert "turned off" in geometry.summary
+    assert "setup --reconfigure" in geometry.remediation
+
+
 def test_real_camera_probe_uses_mixed_yam_reader_without_preparing_driver(
     rig, monkeypatch
 ) -> None:
