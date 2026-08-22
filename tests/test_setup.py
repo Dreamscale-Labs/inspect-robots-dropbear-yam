@@ -9,7 +9,6 @@ from dropbear_yam.setup_command import SetupDependencies, discover_cameras, setu
 def test_setup_prompts_only_for_unavoidable_assignments_and_geometry(isolated_paths: Path) -> None:
     answers = iter(
         [
-            "jay-rig-1",  # profile name
             "1",
             "2",
             "3",  # top, left, right cameras
@@ -42,7 +41,7 @@ def test_setup_prompts_only_for_unavoidable_assignments_and_geometry(isolated_pa
 
     from dropbear_yam import config
 
-    assert path == config.rig_path("jay-rig-1")
+    assert path == config.rig_path("default")
     assert (rig.top_camera, rig.left_camera, rig.right_camera) == (
         "/dev/v4l/by-id/cam-a",
         "/dev/v4l/by-id/cam-b",
@@ -50,7 +49,7 @@ def test_setup_prompts_only_for_unavoidable_assignments_and_geometry(isolated_pa
     )
     assert (rig.left_channel, rig.right_channel) == ("can0", "can1")
     assert login_calls == [True]
-    assert len(prompts) == 11
+    assert len(prompts) == 10
 
 
 def test_setup_is_idempotent_and_does_not_prompt_when_rig_exists(rig, isolated_paths: Path) -> None:

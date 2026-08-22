@@ -13,7 +13,7 @@ No credentials or rig-specific configuration are stored in this repository.
 On the Linux computer connected to both arms and all three cameras:
 
 ```bash
-git clone --branch v0.1.4 --depth 1 \
+git clone --branch stable --depth 1 \
   https://github.com/Dreamscale-Labs/inspect-robots-dropbear-yam.git
 cd inspect-robots-dropbear-yam
 ./setup.sh
@@ -31,13 +31,16 @@ another trained task when the scene differs.
 `setup.sh` installs `uv` when needed and creates the locked Python 3.12 project environment. No
 manual virtual environment activation is required.
 
+`stable` is the customer-facing release channel. Dreamscale fast-forwards it only after an
+immutable versioned release passes the local and Linux release gates.
+
 `setup.sh` is safe to rerun. It installs missing Debian/Ubuntu build prerequisites only after one
 explicit sudo confirmation, installs `uv` when absent, reproduces `uv.lock`, and launches the rig
-interview. The first setup gives the physical rig a short name such as `jay-rig-1`. Existing
-confirmed values are kept. To deliberately replace one named rig:
+interview. The first rig is automatically stored as `default`; Jay does not name it or
+pass `--rig`. Existing confirmed values are kept. To deliberately replace it:
 
 ```bash
-./dropbear-yam setup --rig jay-rig-1 --reconfigure
+./dropbear-yam setup --reconfigure
 ```
 
 Camera discovery probes every color-capable V4L2 node; it does not assume that color is
@@ -50,22 +53,26 @@ identical cameras with ambiguous or empty serials.
 
 The interview asks only for facts software cannot safely infer:
 
-- a rig-profile name when the host has none or more than one;
 - which detected stable camera source is top, left and right;
 - which SocketCAN interface controls the left and right arm;
 - measured left/right arm-base `(x, y, z)` and yaw in one rig coordinate frame;
 - measured table-top `z` in that same frame; and
 - Dropbear login, but only when credentials are absent.
 
-It writes `~/.config/dropbear-yam/rigs/<name>.toml` with permissions `0600`. The file contains no
-API key. Authentication remains in Dropbear's own config.
-
-With one configured rig, the short commands above remain unambiguous. On Jay's multi-rig host,
-name the physical rig on every command so the program never guesses:
+It writes `~/.config/dropbear-yam/rigs/default.toml` with permissions `0600`. The file contains no
+API key. Authentication remains in Dropbear's own config. To configure an additional physical
+rig, give only that additional rig a name:
 
 ```bash
-./dropbear-yam doctor --rig jay-rig-1
-./dropbear-yam run --rig jay-rig-1 "Pack container"
+./dropbear-yam setup --rig jay-rig-2
+```
+
+With one configured rig, the short commands above remain unambiguous. Once multiple profiles are
+configured, name the physical rig on every command so the program never guesses:
+
+```bash
+./dropbear-yam doctor --rig default
+./dropbear-yam run --rig default "Pack container"
 ```
 
 ## What doctor proves

@@ -63,7 +63,7 @@ def test_fake_setup_doctor_shadow_gated_run_and_cleanup(
     isolated_paths: Path, tmp_path: Path
 ) -> None:
     answers = iter(
-        ["jay-rig-1", "1", "2", "3", "1", "2", "0 0.3 0", "0 -0.3 0", "0", "0", "0"]
+        ["1", "2", "3", "1", "2", "0 0.3 0", "0 -0.3 0", "0", "0", "0"]
     )
     setup(
         deps=SetupDependencies(

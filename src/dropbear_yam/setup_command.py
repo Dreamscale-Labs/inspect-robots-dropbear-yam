@@ -282,6 +282,8 @@ def _setup_path(
     if rig_name is not None:
         return rig_path(rig_name)
     configured = rig_profiles()
+    if not configured:
+        return rig_path("default")
     if len(configured) == 1:
         return next(iter(configured.values()))
     if configured:
