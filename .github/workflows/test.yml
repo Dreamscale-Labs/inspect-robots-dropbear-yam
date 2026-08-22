@@ -16,7 +16,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --locked --extra dev
+      - run: uv sync --locked --python 3.12 --extra dev --extra hardware
       - run: uv run ruff check .
       - run: uv run mypy src/dropbear_yam
       - run: uv run pytest -q

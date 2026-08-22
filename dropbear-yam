@@ -10,4 +10,4 @@ if [[ -z "$uv_bin" ]]; then
   echo "uv is missing; run $repo_dir/setup.sh first." >&2
   exit 2
 fi
-exec "$uv_bin" run --project "$repo_dir" --locked --extra hardware dropbear-yam "$@"
+exec "$uv_bin" run --project "$repo_dir" --python 3.12 --locked --extra hardware dropbear-yam "$@"

@@ -13,7 +13,7 @@ No credentials or rig-specific configuration are stored in this repository.
 On the Linux computer connected to both arms and all three cameras:
 
 ```bash
-git clone --branch v0.1.2 --depth 1 \
+git clone --branch v0.1.3 --depth 1 \
   https://github.com/Dreamscale-Labs/inspect-robots-dropbear-yam.git
 cd inspect-robots-dropbear-yam
 ./setup.sh
@@ -28,8 +28,8 @@ one of the repositories recorded in the checkpoint's
 training mixture. Use it only with a scene arranged for that task; replace the quoted text with
 another trained task when the scene differs.
 
-`setup.sh` installs `uv` when needed and creates the locked project environment. No manual virtual
-environment activation is required.
+`setup.sh` installs `uv` when needed and creates the locked Python 3.12 project environment. No
+manual virtual environment activation is required.
 
 `setup.sh` is safe to rerun. It installs missing Debian/Ubuntu build prerequisites only after one
 explicit sudo confirmation, installs `uv` when absent, reproduces `uv.lock`, and launches the rig
