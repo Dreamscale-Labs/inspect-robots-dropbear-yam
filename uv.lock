@@ -920,7 +920,7 @@ dependencies = [
 
 [[package]]
 name = "inspect-robots-dropbear-yam"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "dropbear", extra = ["dreamzero"] },
@@ -960,7 +960,7 @@ provides-extras = ["hardware", "dev"]
 
 [[package]]
 name = "inspect-robots-yam"
-version = "0.33.1.dev3+gfb0b26949"
+version = "0.33.0+dreamscale.1"
 source = { git = "https://github.com/Dreamscale-Labs/inspect-robots-yam.git?rev=fb0b2694927360379043f17b6c9b4cf7acca0a6d#fb0b2694927360379043f17b6c9b4cf7acca0a6d" }
 dependencies = [
     { name = "inspect-robots" },

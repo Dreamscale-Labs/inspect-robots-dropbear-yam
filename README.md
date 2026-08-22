@@ -13,7 +13,7 @@ No credentials or rig-specific configuration are stored in this repository.
 On the Linux computer connected to both arms and all three cameras:
 
 ```bash
-git clone --branch v0.1.1 --depth 1 \
+git clone --branch v0.1.2 --depth 1 \
   https://github.com/Dreamscale-Labs/inspect-robots-dropbear-yam.git
 cd inspect-robots-dropbear-yam
 ./setup.sh
