@@ -13,19 +13,30 @@ No credentials or rig-specific configuration are stored in this repository.
 On the Linux computer connected to both arms and all three cameras:
 
 ```bash
-git clone --branch v0.1.0 --depth 1 \
-  https://github.com/Dreamscale-Labs/inspect-robots-dropbear-yam.git ~/dropbear-yam
-~/dropbear-yam/setup.sh
-~/dropbear-yam/dropbear-yam doctor
-~/dropbear-yam/dropbear-yam run "TASK INSTRUCTION"
+git clone --branch v0.1.1 --depth 1 \
+  https://github.com/Dreamscale-Labs/inspect-robots-dropbear-yam.git
+cd inspect-robots-dropbear-yam
+./setup.sh
+./dropbear-yam doctor
+./dropbear-yam run "Pack container"
 ```
+
+`"Pack container"` is an exact in-distribution task from
+[`allenai/01122025-box-01`](https://huggingface.co/datasets/allenai/01122025-box-01),
+one of the repositories recorded in the checkpoint's
+[`experiment_cfg/conf.yaml`](https://huggingface.co/robocurve/dreamzero-yam-molmoact2/blob/f9b72b8dfa124f7283c5b1d467ce2ff9253c737a/experiment_cfg/conf.yaml)
+training mixture. Use it only with a scene arranged for that task; replace the quoted text with
+another trained task when the scene differs.
+
+`setup.sh` installs `uv` when needed and creates the locked project environment. No manual virtual
+environment activation is required.
 
 `setup.sh` is safe to rerun. It installs missing Debian/Ubuntu build prerequisites only after one
 explicit sudo confirmation, installs `uv` when absent, reproduces `uv.lock`, and launches the rig
 interview. Existing confirmed values are kept. To deliberately replace them:
 
 ```bash
-~/dropbear-yam/dropbear-yam setup --reconfigure
+./dropbear-yam setup --reconfigure
 ```
 
 The interview asks only for facts software cannot safely infer:
@@ -42,9 +53,9 @@ Authentication remains in Dropbear's own config.
 ## What doctor proves
 
 ```bash
-~/dropbear-yam/dropbear-yam doctor
-~/dropbear-yam/dropbear-yam doctor --json
-~/dropbear-yam/dropbear-yam doctor --support-bundle ~/dropbear-yam-support.tar.gz
+./dropbear-yam doctor
+./dropbear-yam doctor --json
+./dropbear-yam doctor --support-bundle ~/dropbear-yam-support.tar.gz
 ```
 
 Doctor performs no robot motion, does not construct the I2RT motor driver, and creates no paid
