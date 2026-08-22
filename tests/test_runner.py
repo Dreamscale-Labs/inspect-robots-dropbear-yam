@@ -63,6 +63,7 @@ class FakePolicy:
     def __init__(self) -> None:
         self.session_id = "session-owned"
         self.reset_calls: list[Scene] = []
+        self.predict_calls = 0
         self.act_calls = 0
         self.closed = False
 
@@ -73,9 +74,15 @@ class FakePolicy:
         self.act_calls += 1
         assert observation.extra["env_step"] == 0
         return ActionChunk(
-            actions=[Action(np.zeros(14), {"dropbear_action_source": "model"})],
+            actions=[Action(np.zeros(14), {"dropbear_action_source": "hold"})],
             control_hz=30,
         )
+
+    def predict_model_action(self, observation: Observation, *, instruction: str) -> Action:
+        self.predict_calls += 1
+        assert instruction
+        assert observation.extra["env_step"] == 0
+        return Action(np.zeros(14), {"dropbear_action_source": "model"})
 
     def close(self) -> None:
         self.closed = True
@@ -110,6 +117,7 @@ def test_shadow_inference_is_validated_never_executed_and_session_is_reused(
         assert active_policy is policy
         assert active_embodiment is embodiment
         assert isinstance(kwargs["approver"], ChainApprover)
+        active_policy.reset(task.scenes[0])
         eval_calls.append(kwargs)
         return [SimpleNamespace(status="success")]
 
@@ -126,7 +134,9 @@ def test_shadow_inference_is_validated_never_executed_and_session_is_reused(
     result = run("move the blue cup", rig, deps=deps, lock_path=lock, max_steps=2)
 
     assert result == 0
-    assert policy.act_calls == 1
+    assert policy.predict_calls == 1
+    assert policy.act_calls == 0
+    assert [scene.id for scene in policy.reset_calls] == ["jay-attended"]
     assert len(embodiment.validations) == 1
     assert embodiment.commands == []
     assert len(eval_calls) == 1

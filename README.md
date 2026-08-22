@@ -116,8 +116,9 @@ After that confirmation the program:
 
 1. opens cameras and I2RT once, performs required gripper calibration, and observes the real
    pre-home state without sending an arm pose;
-2. for a new configuration digest, performs exactly one shadow inference, validates its first
-   model action against the measured pre-home state, and never executes that action;
+2. for a new configuration digest, blocks for exactly one real model chunk, validates its first
+   action against the measured pre-home state, and never executes that action (an expected initial
+   `async_latest` hold cannot satisfy this shadow check);
 3. reuses the same hardware connection and, when shadow was needed, the same Dropbear session;
 4. retains the YAM fork's stand-clear homing prompt and scene-ready prompt;
 5. runs Inspect Robots programmatically with abort-only strict action guards and, when configured,
