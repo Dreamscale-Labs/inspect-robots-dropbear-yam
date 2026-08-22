@@ -8,6 +8,7 @@ from dropbear_yam.doctor import (
     CameraProbe,
     CloudProbe,
     DoctorDependencies,
+    _camera_probe,
     create_support_bundle,
     doctor,
 )
@@ -101,3 +102,68 @@ def test_doctor_rejects_stale_future_missing_and_wrong_shape_camera_data(rig) ->
         deps = _deps(rig)
         deps.camera_probe = lambda _rig, result=probe: result
         assert doctor(rig, deps=deps).ok is False
+
+
+def test_doctor_accepts_distinct_stable_mixed_camera_sources(rig) -> None:
+    from dropbear_yam.config import RigConfig
+
+    mixed = RigConfig(
+        **{
+            **rig.as_dict(),
+            "top_camera": "/dev/v4l/by-id/d435-video-index0",
+            "left_camera": "realsense:LEFT-D405",
+            "right_camera": "/dev/v4l/by-path/pci-usb-right-video-index4",
+        }
+    )
+
+    report = doctor(mixed, deps=_deps(mixed))
+    by_code = {check.code: check for check in report.checks}
+
+    assert by_code["DBY-CAMERA-ROLES"].status == "pass"
+    assert report.ok is True
+
+
+def test_real_camera_probe_uses_mixed_yam_reader_without_preparing_driver(
+    rig, monkeypatch
+) -> None:
+    import numpy as np
+
+    from dropbear_yam.config import RigConfig
+
+    calls: list[str] = []
+    now = time.time()
+
+    class Captured(dict):
+        image_times = {name: now for name in ("top_cam", "left_cam", "right_cam")}
+
+    class CameraOnlyEmbodiment:
+        def __init__(self, config) -> None:
+            assert config.left_depth_serial == "LEFT-D405"
+            self._camera_reader = lambda _config: Captured(
+                {
+                    name: np.zeros((360, 640, 3), dtype=np.uint8)
+                    for name in ("top_cam", "left_cam", "right_cam")
+                }
+            )
+            calls.append("constructed")
+
+        def close(self) -> None:
+            calls.append("closed")
+
+    mixed = RigConfig(
+        **{
+            **rig.as_dict(),
+            "left_camera": "realsense:LEFT-D405",
+        }
+    )
+    monkeypatch.setattr(
+        "inspect_robots_yam.embodiment.YAMEmbodiment",
+        CameraOnlyEmbodiment,
+    )
+
+    probe = _camera_probe(mixed)
+
+    assert probe.shapes == {
+        name: (360, 640, 3) for name in ("top_cam", "left_cam", "right_cam")
+    }
+    assert calls == ["constructed", "closed"]
