@@ -48,7 +48,7 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["dropbear.*", "inspect_robots_dropbear.*"]
+module = ["dropbear.*", "inspect_robots_dropbear.*", "pyrealsense2"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

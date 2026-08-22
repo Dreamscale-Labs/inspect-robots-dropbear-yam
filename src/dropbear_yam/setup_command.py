@@ -72,7 +72,7 @@ def _rs_info(device: Any, rs: Any, name: str) -> str:
 
 def _discover_realsense_devices() -> list[dict[str, str]]:
     try:
-        import pyrealsense2 as rs  # type: ignore[import-not-found]
+        import pyrealsense2 as rs
     except ImportError:
         return []
     records: list[dict[str, str]] = []
