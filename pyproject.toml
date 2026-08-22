@@ -13,7 +13,7 @@ dependencies = [
   "dropbear[dreamzero]==0.1.0a10",
   "inspect-robots @ git+https://github.com/robocurve/inspect-robots.git@d748ed9bebf74e660e9daf319475e57d70d10f23",
   "inspect-robots-dropbear @ git+https://github.com/Dreamscale-Labs/inspect-robots-dropbear.git@9d7ca388dff6596b1b46019a77e5217d1dcec3fa",
-  "inspect-robots-yam[collision] @ git+https://github.com/Dreamscale-Labs/inspect-robots-yam.git@21567e96e4537897e62d542cb04545009be40502",
+  "inspect-robots-yam[collision] @ git+https://github.com/Dreamscale-Labs/inspect-robots-yam.git@fb0b2694927360379043f17b6c9b4cf7acca0a6d",
   "numpy>=2.0,<2.5",
   "tomli-w>=1.2,<2",
 ]
