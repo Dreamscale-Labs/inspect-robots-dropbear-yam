@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from inspect_robots.scene import Scene
 from inspect_robots.types import Action, ActionChunk
 from inspect_robots_yam.config import YamConfig
@@ -59,12 +60,17 @@ class FakeDropbearPolicy:
         self.closed = True
 
 
+@pytest.mark.parametrize(
+    "collision_answers",
+    [
+        ["y", "0 0.3 0", "0 -0.3 0", "0", "0", "0"],
+        ["n"],
+    ],
+)
 def test_fake_setup_doctor_shadow_gated_run_and_cleanup(
-    isolated_paths: Path, tmp_path: Path
+    collision_answers: list[str], isolated_paths: Path, tmp_path: Path
 ) -> None:
-    answers = iter(
-        ["1", "2", "3", "1", "2", "0 0.3 0", "0 -0.3 0", "0", "0", "0"]
-    )
+    answers = iter(["1", "2", "3", "1", "2", *collision_answers])
     setup(
         deps=SetupDependencies(
             discover_cameras=lambda: [

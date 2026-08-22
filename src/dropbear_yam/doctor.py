@@ -229,8 +229,9 @@ def _provenance() -> list[Diagnostic]:
             Diagnostic(
                 "DBY-PROVENANCE",
                 "fail",
-                "; ".join(failures),
-                "from the cloned repo run: uv sync --locked --extra hardware",
+                "The installed Python packages do not match this release: " + "; ".join(failures),
+                "From this cloned repository, run `uv sync --locked --extra hardware`, then "
+                "rerun doctor",
                 installed,
             )
         ]
@@ -265,6 +266,10 @@ def _fail(code: str, summary: str, remediation: str) -> Diagnostic:
     return Diagnostic(code, "fail", summary, remediation)
 
 
+def _warn(code: str, summary: str, remediation: str) -> Diagnostic:
+    return Diagnostic(code, "warn", summary, remediation)
+
+
 def _camera_checks(rig: RigConfig, deps: DoctorDependencies) -> list[Diagnostic]:
     checks: list[Diagnostic] = []
     devices = (rig.top_camera, rig.left_camera, rig.right_camera)
@@ -288,8 +293,9 @@ def _camera_checks(rig: RigConfig, deps: DoctorDependencies) -> list[Diagnostic]
         checks.append(
             _fail(
                 "DBY-CAMERA-ROLES",
-                "camera roles must use three distinct stable sources",
-                "rerun setup; use a RealSense serial, /dev/v4l/by-id, or /dev/v4l/by-path source",
+                "The top, left and right camera assignments are not three stable devices",
+                "Run ./dropbear-yam setup --reconfigure and assign a different detected camera "
+                "to each role",
             )
         )
         return checks
@@ -299,8 +305,9 @@ def _camera_checks(rig: RigConfig, deps: DoctorDependencies) -> list[Diagnostic]
         checks.append(
             _fail(
                 "DBY-CAMERA-FRAMES",
-                f"camera capture failed: {exc}",
-                "check USB power, permissions, stable paths and close other camera users",
+                f"A configured camera could not provide an image: {exc}",
+                "Check camera USB power and permissions, close other camera programs, then "
+                "rerun ./dropbear-yam doctor",
             )
         )
         return checks
@@ -311,29 +318,31 @@ def _camera_checks(rig: RigConfig, deps: DoctorDependencies) -> list[Diagnostic]
         checks.append(
             _fail(
                 "DBY-CAMERA-FRAMES",
-                f"camera shapes/names do not match: {probe.shapes}",
-                "verify all three camera role assignments and 640x360 capture",
+                f"The cameras did not all provide 640x360 color images: {probe.shapes}",
+                "Run ./dropbear-yam setup --reconfigure to check the three roles, then "
+                "rerun doctor",
             )
         )
     times = probe.image_times
     now = deps.now()
     reason = ""
     if set(times) != set(CAMERA_NAMES):
-        reason = "one or more source timestamps are missing"
+        reason = "At least one camera did not report when its image was captured"
     elif any(not math.isfinite(value) for value in times.values()):
-        reason = "one or more source timestamps are non-finite"
+        reason = "At least one camera reported an invalid capture time"
     elif any(now - value > MAX_IMAGE_AGE_S for value in times.values()):
-        reason = "one or more source timestamps are stale"
+        reason = "At least one camera image is more than 5 seconds old"
     elif any(value - now > MAX_IMAGE_FUTURE_S for value in times.values()):
-        reason = "one or more source timestamps are implausibly future-dated"
+        reason = "At least one camera capture time is incorrectly in the future"
     elif max(times.values()) - min(times.values()) > MAX_CAMERA_SKEW_S:
-        reason = "cross-camera source timestamp skew exceeds 50 ms"
+        reason = "The three camera images were captured more than 50 ms apart"
     if reason:
         checks.append(
             _fail(
                 "DBY-CAMERA-TIMESTAMPS",
                 reason,
-                "fix host clock/camera capture before opening a model session",
+                "Synchronize the Ubuntu clock, reconnect the cameras, close other camera "
+                "programs, then rerun ./dropbear-yam doctor",
             )
         )
     else:
@@ -353,15 +362,21 @@ def doctor(rig: RigConfig, *, deps: DoctorDependencies | None = None) -> DoctorR
     if deps.system_name() == "Linux":
         checks.append(_pass("DBY-HOST-LINUX", "Linux host detected"))
     else:
-        checks.append(_fail("DBY-HOST-LINUX", "YAM hardware requires Linux", "use the robot host"))
+        checks.append(
+            _fail(
+                "DBY-HOST-LINUX",
+                "This is not the Linux computer connected to the YAM rig",
+                "Run these commands on the Ubuntu computer connected to both arms and all cameras",
+            )
+        )
 
     required = ("git", "uv", "ip", "v4l2-ctl", "cmake", "pkg-config")
     missing = [name for name in required if not deps.command_exists(name)]
     checks.append(
         _fail(
             "DBY-HOST-BUILD",
-            f"missing host commands: {', '.join(missing)}",
-            "rerun ./setup.sh and approve its single prerequisite install",
+            f"Required system tools are missing: {', '.join(missing)}",
+            "Run ./setup.sh from this cloned repository and approve its one system-package step",
         )
         if missing
         else _pass("DBY-HOST-BUILD", "host and build prerequisites are present")
@@ -375,8 +390,9 @@ def doctor(rig: RigConfig, *, deps: DoctorDependencies | None = None) -> DoctorR
         if synchronized
         else _fail(
             "DBY-CLOCK",
-            f"host clock is not synchronized: {clock_detail}",
-            "enable systemd-timesyncd or chrony and wait for synchronization",
+            f"The computer clock is not synchronized: {clock_detail}",
+            "Enable Ubuntu time synchronization with systemd-timesyncd or chrony, wait until it "
+            "reports synchronized, then rerun doctor",
         )
     )
     checks.extend(_camera_checks(rig, deps))
@@ -392,8 +408,9 @@ def doctor(rig: RigConfig, *, deps: DoctorDependencies | None = None) -> DoctorR
         if can_ok
         else _fail(
             "DBY-CAN",
-            f"one or more CAN interfaces are not ready: {can_details}",
-            "bring up the named interfaces; doctor will not open a motor driver",
+            f"At least one arm CAN connection is not UP: {can_details}",
+            "Connect both CAN adapters, bring the configured interfaces UP, confirm them with "
+            "`ip -details link show type can`, then rerun doctor",
         )
     )
 
@@ -401,18 +418,28 @@ def doctor(rig: RigConfig, *, deps: DoctorDependencies | None = None) -> DoctorR
     checks.append(
         _pass("DBY-JOINT-LIMITS", "joint bounds match pinned I2RT ArmType.YAM")
         if bounds_ok
-        else _fail("DBY-JOINT-LIMITS", "joint bounds differ", "rerun setup from this release")
+        else _fail(
+            "DBY-JOINT-LIMITS",
+            "The configured joint limits do not match this YAM software release",
+            "Run ./dropbear-yam setup --reconfigure from this checkout",
+        )
     )
-    geometry_ok = (
-        len(rig.collision_left_base_pos) == 3
-        and len(rig.collision_right_base_pos) == 3
-        and rig.collision_table_height is not None
-    )
-    checks.append(
-        _pass("DBY-GEOMETRY", "measured arm-base and table geometry is present")
-        if geometry_ok
-        else _fail("DBY-GEOMETRY", "collision geometry is incomplete", "measure and reconfigure")
-    )
+    if rig.collision_guardrail:
+        checks.append(
+            _pass(
+                "DBY-GEOMETRY",
+                "Predictive arm and table collision checking is configured",
+            )
+        )
+    else:
+        checks.append(
+            _warn(
+                "DBY-GEOMETRY",
+                "Predictive collision checking is turned off by configuration",
+                "To add it later, measure both arm-base positions and yaws plus table height, "
+                "then run ./dropbear-yam setup --reconfigure",
+            )
+        )
     try:
         cadences = deps.cadence_probe(rig)
     except Exception as exc:
@@ -425,8 +452,9 @@ def doctor(rig: RigConfig, *, deps: DoctorDependencies | None = None) -> DoctorR
         if cadences == (30.0, 30.0, 30.0)
         else _fail(
             "DBY-CADENCE",
-            f"cadence mismatch: {cadence_detail}",
-            "restore the pinned install and 30 Hz rig config",
+            f"The rig, YAM driver and model do not all use 30 Hz: {cadence_detail}",
+            "Run `uv sync --locked --extra hardware`, then run "
+            "./dropbear-yam setup --reconfigure from this checkout",
         )
     )
 
@@ -437,15 +465,22 @@ def doctor(rig: RigConfig, *, deps: DoctorDependencies | None = None) -> DoctorR
     checks.append(
         _pass("DBY-AUTH", "Dropbear authentication succeeded")
         if cloud.authenticated
-        else _fail("DBY-AUTH", cloud.detail or "not authenticated", "run dropbear login")
+        else _fail(
+            "DBY-AUTH",
+            "Dropbear login could not be verified"
+            + (f": {cloud.detail}" if cloud.detail else ""),
+            "Run `dropbear login`, complete sign-in, then rerun doctor",
+        )
     )
     checks.append(
         _pass("DBY-ENTITLEMENT", "dreamzero-yam entitlement is present")
         if cloud.entitled
         else _fail(
             "DBY-ENTITLEMENT",
-            cloud.detail or "dreamzero-yam entitlement is absent",
-            "ask Dreamscale to grant dreamzero-yam access",
+            "This Dropbear account cannot use dreamzero-yam"
+            + (f": {cloud.detail}" if cloud.detail else ""),
+            "Ask Dreamscale to grant this Dropbear account access to dreamzero-yam, then "
+            "rerun doctor",
         )
     )
     checks.append(
@@ -453,8 +488,10 @@ def doctor(rig: RigConfig, *, deps: DoctorDependencies | None = None) -> DoctorR
         if cloud.target_available
         else _fail(
             "DBY-TARGET",
-            cloud.detail or "no dreamzero-yam target is available",
-            "retry later or contact Dreamscale with the doctor JSON",
+            "No dreamzero-yam compute target is available"
+            + (f": {cloud.detail}" if cloud.detail else ""),
+            "Wait a few minutes and rerun doctor; if it still fails, send Dreamscale the output "
+            "of ./dropbear-yam doctor --json",
         )
     )
     checks.append(
@@ -462,8 +499,9 @@ def doctor(rig: RigConfig, *, deps: DoctorDependencies | None = None) -> DoctorR
         if not cloud.sessions
         else _fail(
             "DBY-SESSION-CLEAR",
-            f"existing session(s): {', '.join(cloud.sessions)}",
-            "stop or resolve the existing session before running; doctor never stops sessions",
+            f"A Dropbear session is already running: {', '.join(cloud.sessions)}",
+            "Do not start another run. Stop or resolve the listed session first, then rerun "
+            "doctor; doctor will not stop it automatically",
         )
     )
     return DoctorReport(tuple(checks))

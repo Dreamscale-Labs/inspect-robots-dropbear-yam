@@ -106,11 +106,11 @@ class RigConfig:
     right_camera: str
     left_channel: str
     right_channel: str
-    collision_left_base_pos: tuple[float, float, float]
-    collision_right_base_pos: tuple[float, float, float]
-    collision_left_base_yaw: float
-    collision_right_base_yaw: float
-    collision_table_height: float | None
+    collision_left_base_pos: tuple[float, float, float] | None = None
+    collision_right_base_pos: tuple[float, float, float] | None = None
+    collision_left_base_yaw: float | None = None
+    collision_right_base_yaw: float | None = None
+    collision_table_height: float | None = None
     schema_version: int = 1
     model_target: str = "dreamzero-yam"
     cam_width: int = 640
@@ -148,12 +148,36 @@ class RigConfig:
             raise ValueError("billing-safe cleanup requires keep_warm=0")
         if not self.strict_policy_actions:
             raise ValueError("live policy execution requires strict abort behavior")
-        if not self.collision_guardrail or not self.collision_table:
-            raise ValueError("predictive collision and table checks are mandatory")
-        if self.collision_table_height is None:
-            raise ValueError("measured collision geometry is mandatory")
-        if len(self.collision_left_base_pos) != 3 or len(self.collision_right_base_pos) != 3:
-            raise ValueError("collision base positions must contain x y z")
+        collision_values = (
+            self.collision_left_base_pos,
+            self.collision_right_base_pos,
+            self.collision_left_base_yaw,
+            self.collision_right_base_yaw,
+            self.collision_table_height,
+        )
+        if self.collision_guardrail:
+            if not self.collision_table:
+                raise ValueError(
+                    "table collision checking must be on when predictive collision checking is on"
+                )
+            if any(value is None for value in collision_values):
+                raise ValueError(
+                    "all five collision measurements are required when predictive collision "
+                    "checking is on"
+                )
+            if (
+                len(self.collision_left_base_pos or ()) != 3
+                or len(self.collision_right_base_pos or ()) != 3
+            ):
+                raise ValueError("each arm-base collision position must contain x y z")
+        elif self.collision_table:
+            raise ValueError(
+                "table collision checking cannot be on when predictive collision checking is off"
+            )
+        elif any(value is not None for value in collision_values):
+            raise ValueError(
+                "remove the collision measurements when predictive collision checking is off"
+            )
         if self.joint_low != I2RT_JOINT_LOW or self.joint_high != I2RT_JOINT_HIGH:
             raise ValueError("joint bounds must match the pinned I2RT YAM model")
         if self.step_limits != STRICT_STEP_LIMITS:
@@ -188,16 +212,21 @@ class RigConfig:
             "joint_high": self.joint_high,
             "step_limits": self.step_limits,
             "collision_guardrail": self.collision_guardrail,
-            "collision_left_base_pos": self.collision_left_base_pos,
-            "collision_right_base_pos": self.collision_right_base_pos,
-            "collision_left_base_yaw": self.collision_left_base_yaw,
-            "collision_right_base_yaw": self.collision_right_base_yaw,
             "collision_table": self.collision_table,
-            "collision_table_height": self.collision_table_height,
             "auto_start": self.auto_start,
             "unattended": self.unattended,
             "strict_policy_actions": self.strict_policy_actions,
         }
+        if self.collision_guardrail:
+            kwargs.update(
+                {
+                    "collision_left_base_pos": self.collision_left_base_pos,
+                    "collision_right_base_pos": self.collision_right_base_pos,
+                    "collision_left_base_yaw": self.collision_left_base_yaw,
+                    "collision_right_base_yaw": self.collision_right_base_yaw,
+                    "collision_table_height": self.collision_table_height,
+                }
+            )
         for slot, source in (
             ("top", self.top_camera),
             ("left", self.left_camera),
@@ -222,7 +251,7 @@ class RigConfig:
             "joint_high",
             "step_limits",
         ):
-            if name in values:
+            if name in values and values[name] is not None:
                 values[name] = tuple(values[name])
         return cls(**values)
 
@@ -261,7 +290,8 @@ def save_rig(
             )
     resolved.parent.mkdir(parents=True, exist_ok=True)
     temporary = resolved.with_suffix(".toml.tmp")
-    temporary.write_text(tomli_w.dumps({"rig": rig.as_dict()}), encoding="utf-8")
+    serialized = {key: value for key, value in rig.as_dict().items() if value is not None}
+    temporary.write_text(tomli_w.dumps({"rig": serialized}), encoding="utf-8")
     os.chmod(temporary, 0o600)
     os.replace(temporary, resolved)
     return resolved

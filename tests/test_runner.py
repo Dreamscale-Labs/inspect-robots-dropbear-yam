@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +17,9 @@ from dropbear_yam.runner import (
     NonRewritingApprover,
     RunDependencies,
     _cleanup_async,
+    _confirm,
+    _loading_status,
+    _strict_approver,
     configuration_digest,
     run,
     shadow_path,
@@ -98,6 +102,7 @@ def test_shadow_inference_is_validated_never_executed_and_session_is_reused(
     embodiment = FakeEmbodiment()
     policy = FakePolicy()
     eval_calls: list[dict[str, object]] = []
+    loading: list[str] = []
     lock = tmp_path / "composition.lock.toml"
     lock.write_text("commit='one'\n")
 
@@ -115,6 +120,7 @@ def test_shadow_inference_is_validated_never_executed_and_session_is_reused(
         policy=lambda _rig: policy,
         evaluate=fake_eval,
         cleanup=lambda session_id: CleanupResult(session_id, disappeared=True, forced=False),
+        loading=lambda message: _record_context(loading, message),
     )
 
     result = run("move the blue cup", rig, deps=deps, lock_path=lock, max_steps=2)
@@ -127,6 +133,7 @@ def test_shadow_inference_is_validated_never_executed_and_session_is_reused(
     assert embodiment.closed is True
     assert policy.closed is True
     assert shadow_path(configuration_digest(rig, lock)).exists()
+    assert loading == ["Starting Dropbear compute"]
 
 
 def test_run_closes_both_objects_and_forced_cleanup_exits_nonzero(
@@ -175,6 +182,92 @@ def test_non_rewriting_wrapper_aborts_action_substitution() -> None:
 
     with pytest.raises(Exception, match="rewrite"):
         wrapped.review(Action(np.zeros(14)), {})
+
+
+@contextlib.contextmanager
+def _record_context(records: list[str], message: str):
+    records.append(message)
+    yield
+
+
+def test_connect_confirmation_is_yes_no_with_yes_as_default(monkeypatch, capsys) -> None:
+    answers = iter(["maybe", ""])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    assert _confirm("Connect hardware?") is True
+    assert "Please answer y or n." in capsys.readouterr().out
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+    assert _confirm("Connect hardware?") is False
+
+
+def test_loading_status_immediately_shows_symbol_and_elapsed_seconds(capsys) -> None:
+    with _loading_status("Starting Dropbear compute"):
+        pass
+
+    output = capsys.readouterr().out
+    assert "⠋ Starting Dropbear compute — 0s waiting" in output
+    assert "Starting Dropbear compute ready after 0s" in output
+
+
+def test_collision_approver_is_optional_but_action_validation_remains_strict(rig) -> None:
+    embodiment = FakeEmbodiment()
+    embodiment.contribute_guardrails = lambda _space: (_ for _ in ()).throw(
+        AssertionError("collision contribution should not be constructed")
+    )
+
+    approver = _strict_approver(embodiment, collision_guardrail_enabled=False)
+    action = Action(np.zeros(14))
+
+    assert approver.review(action, {}) is action
+
+
+def test_shadow_message_does_not_call_inference_paid(
+    rig, isolated_paths: Path, tmp_path: Path
+) -> None:
+    embodiment = FakeEmbodiment()
+    policy = FakePolicy()
+    output: list[str] = []
+    lock = tmp_path / "composition.lock.toml"
+    lock.write_text("commit='one'\n")
+    deps = RunDependencies(
+        doctor=lambda _rig: _ok_report(),
+        confirm=lambda _prompt: True,
+        embodiment=lambda _rig: embodiment,
+        policy=lambda _rig: policy,
+        evaluate=lambda *_args, **_kwargs: [SimpleNamespace(status="success")],
+        cleanup=lambda session_id: CleanupResult(session_id, True, False),
+        output=output.append,
+        loading=lambda message: _record_context([], message),
+    )
+
+    assert run("move the blue cup", rig, deps=deps, lock_path=lock, max_steps=1) == 0
+    shadow_line = next(line for line in output if "shadow inference" in line.lower())
+    assert "paid" not in shadow_line.lower()
+
+
+def test_run_failure_is_plain_and_actionable(rig, isolated_paths: Path, tmp_path: Path) -> None:
+    embodiment = FakeEmbodiment()
+    policy = FakePolicy()
+    output: list[str] = []
+    lock = tmp_path / "composition.lock.toml"
+    lock.write_text("commit='one'\n")
+    deps = RunDependencies(
+        doctor=lambda _rig: _ok_report(),
+        confirm=lambda _prompt: True,
+        embodiment=lambda _rig: embodiment,
+        policy=lambda _rig: policy,
+        evaluate=lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("camera unplugged")),
+        cleanup=lambda session_id: CleanupResult(session_id, True, False),
+        output=output.append,
+        loading=lambda message: _record_context([], message),
+    )
+
+    assert run("move the blue cup", rig, deps=deps, lock_path=lock, max_steps=1) == 1
+    text = "\n".join(output)
+    assert "Error: The run stopped before completion: camera unplugged" in text
+    assert "Next:" in text
+    assert "RuntimeError" not in text
 
 
 def test_cleanup_deletes_only_the_exact_owned_session(monkeypatch) -> None:

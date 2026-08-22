@@ -40,7 +40,12 @@ def test_rig_round_trip_is_fixed_attended_strict_30_hz(
         ({"unattended": True}, "unattended=false"),
         ({"keep_warm": 10}, "keep_warm=0"),
         ({"strict_policy_actions": False}, "strict abort"),
-        ({"collision_table_height": None}, "collision geometry"),
+        ({"collision_table_height": None}, "all five collision measurements"),
+        (
+            {"collision_guardrail": False, "collision_table": False},
+            "remove the collision measurements",
+        ),
+        ({"collision_table": False}, "table collision checking"),
         ({"left_camera": "/dev/video4"}, "stable camera"),
         ({"left_camera": "realsense:"}, "serial"),
     ],
@@ -50,6 +55,32 @@ def test_rig_refuses_unsafe_product_boundary(
 ) -> None:
     with pytest.raises(ValueError, match=match):
         RigConfig(**{**rig.as_dict(), **changes})
+
+
+def test_collision_geometry_can_be_deliberately_omitted(
+    rig: RigConfig, isolated_paths: Path
+) -> None:
+    without_geometry = RigConfig(
+        **{
+            **rig.as_dict(),
+            "collision_guardrail": False,
+            "collision_table": False,
+            "collision_left_base_pos": None,
+            "collision_right_base_pos": None,
+            "collision_left_base_yaw": None,
+            "collision_right_base_yaw": None,
+            "collision_table_height": None,
+        }
+    )
+
+    path = save_rig(without_geometry)
+    saved = path.read_text(encoding="utf-8")
+
+    assert load_rig(path) == without_geometry
+    assert "collision_left_base_pos" not in saved
+    assert without_geometry.yam_kwargs()["collision_guardrail"] is False
+    assert without_geometry.yam_kwargs()["collision_table"] is False
+    assert "collision_table_height" not in without_geometry.yam_kwargs()
 
 
 def test_save_rig_does_not_replace_confirmed_values_without_force(
