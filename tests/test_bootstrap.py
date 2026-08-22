@@ -21,3 +21,12 @@ def test_linux_hardware_extra_installs_realsense_discovery_runtime() -> None:
     project = (root / "pyproject.toml").read_text(encoding="utf-8")
 
     assert 'pyrealsense2>=2.50; sys_platform == "linux"' in project
+
+
+def test_readme_uses_the_customer_facing_stable_branch_without_a_rig_flag() -> None:
+    root = Path(__file__).resolve().parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+
+    assert "git clone --branch stable --depth 1" in readme
+    assert './dropbear-yam doctor\n' in readme
+    assert './dropbear-yam run "Pack container"' in readme
