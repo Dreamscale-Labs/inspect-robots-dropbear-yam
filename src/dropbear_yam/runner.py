@@ -288,10 +288,10 @@ def _run_shadow(
     policy: Any,
     digest: str,
 ) -> None:
-    scene = Scene(id="shadow", instruction=instruction)
-    policy.reset(scene)
-    chunk = policy.act(_shadow_observation(observation))
-    action = chunk.actions[0]
+    action = policy.predict_model_action(
+        _shadow_observation(observation),
+        instruction=instruction,
+    )
     if action.meta.get("dropbear_action_source") != "model":
         raise RuntimeError("shadow inference did not return a model action")
     reference = observation.state.get("joint_pos")
