@@ -14,3 +14,10 @@ def test_bootstrap_is_locked_and_has_one_explicit_sudo_confirmation() -> None:
     assert "dropbear-yam setup" in setup
     assert "--locked --extra hardware" in wrapper
     assert "api_key" not in setup + wrapper
+
+
+def test_linux_hardware_extra_installs_realsense_discovery_runtime() -> None:
+    root = Path(__file__).resolve().parents[1]
+    project = (root / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert 'pyrealsense2>=2.50; sys_platform == "linux"' in project

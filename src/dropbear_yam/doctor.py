@@ -21,7 +21,12 @@ from typing import Any, Literal
 from dropbear.config import load_config
 from dropbear.control import ControlPlaneClient
 
-from dropbear_yam.config import I2RT_JOINT_HIGH, I2RT_JOINT_LOW, RigConfig
+from dropbear_yam.config import (
+    I2RT_JOINT_HIGH,
+    I2RT_JOINT_LOW,
+    RigConfig,
+    stable_camera_source,
+)
 
 Status = Literal["pass", "fail", "warn"]
 CAMERA_NAMES = ("top_cam", "left_cam", "right_cam")
@@ -99,27 +104,24 @@ def _clock_synchronized() -> tuple[bool, str]:
 
 
 def _camera_probe(rig: RigConfig) -> CameraProbe:
-    # This opens only V4L2 camera readers. It deliberately does not construct
-    # YAMEmbodiment or the I2RT driver.
     from inspect_robots_yam.config import YamConfig
-    from inspect_robots_yam.embodiment import _OpenCVCameraReader
+    from inspect_robots_yam.embodiment import YAMEmbodiment
 
     config = YamConfig(**rig.yam_kwargs())
-    reader = _OpenCVCameraReader(
-        {
-            "top_cam": rig.top_camera,
-            "left_cam": rig.left_camera,
-            "right_cam": rig.right_camera,
-        }
-    )
+    # Construction chooses and owns only the configured camera readers. The
+    # I2RT driver factory is stored but never called unless prepare/reset runs;
+    # doctor invokes neither method.
+    embodiment = YAMEmbodiment(config)
     try:
-        captured = reader(config)
+        captured: Any = embodiment._camera_reader(  # pyright: ignore[reportPrivateUsage]
+            config
+        )
         return CameraProbe(
             shapes={name: tuple(image.shape) for name, image in captured.items()},
             image_times=dict(captured.image_times),
         )
     finally:
-        reader.close()
+        embodiment.close()
 
 
 def _cadence_probe(rig: RigConfig) -> tuple[float, float, float]:
@@ -266,15 +268,28 @@ def _fail(code: str, summary: str, remediation: str) -> Diagnostic:
 def _camera_checks(rig: RigConfig, deps: DoctorDependencies) -> list[Diagnostic]:
     checks: list[Diagnostic] = []
     devices = (rig.top_camera, rig.left_camera, rig.right_camera)
-    stable = all(device.startswith("/dev/v4l/by-id/") for device in devices)
+    try:
+        stable = all(stable_camera_source(device) for device in devices)
+    except ValueError:
+        stable = False
     if len(set(devices)) == 3 and all(device for device in devices) and stable:
-        checks.append(_pass("DBY-CAMERA-ROLES", "three distinct camera roles are assigned"))
+        checks.append(
+            _pass(
+                "DBY-CAMERA-ROLES",
+                "three distinct stable camera roles are assigned",
+                {
+                    "top_cam": rig.top_camera,
+                    "left_cam": rig.left_camera,
+                    "right_cam": rig.right_camera,
+                },
+            )
+        )
     else:
         checks.append(
             _fail(
                 "DBY-CAMERA-ROLES",
-                "camera roles must use three distinct stable /dev/v4l/by-id paths",
-                "rerun setup",
+                "camera roles must use three distinct stable sources",
+                "rerun setup; use a RealSense serial, /dev/v4l/by-id, or /dev/v4l/by-path source",
             )
         )
         return checks

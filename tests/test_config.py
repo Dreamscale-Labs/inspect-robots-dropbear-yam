@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from dropbear_yam.config import I2RT_JOINT_HIGH, I2RT_JOINT_LOW, RigConfig, load_rig, save_rig
+import dropbear_yam.config as config
+from dropbear_yam.config import (
+    I2RT_JOINT_HIGH,
+    I2RT_JOINT_LOW,
+    RigConfig,
+    load_rig,
+    save_rig,
+)
 
 
 def test_rig_round_trip_is_fixed_attended_strict_30_hz(
@@ -34,6 +41,8 @@ def test_rig_round_trip_is_fixed_attended_strict_30_hz(
         ({"keep_warm": 10}, "keep_warm=0"),
         ({"strict_policy_actions": False}, "strict abort"),
         ({"collision_table_height": None}, "collision geometry"),
+        ({"left_camera": "/dev/video4"}, "stable camera"),
+        ({"left_camera": "realsense:"}, "serial"),
     ],
 )
 def test_rig_refuses_unsafe_product_boundary(
@@ -55,3 +64,46 @@ def test_save_rig_does_not_replace_confirmed_values_without_force(
     assert load_rig(path) == rig
     save_rig(changed, replace=True)
     assert load_rig(path).left_channel == "can9"
+
+
+def test_mixed_stable_camera_sources_map_to_the_yam_backends(rig: RigConfig) -> None:
+    mixed = RigConfig(
+        **{
+            **rig.as_dict(),
+            "top_camera": "/dev/v4l/by-id/d435-video-index0",
+            "left_camera": "realsense:LEFT-D405",
+            "right_camera": "/dev/v4l/by-path/pci-usb-right-video-index4",
+        }
+    )
+
+    kwargs = mixed.yam_kwargs()
+
+    assert kwargs["top_cam_device"] == "/dev/v4l/by-id/d435-video-index0"
+    assert kwargs["left_depth_serial"] == "LEFT-D405"
+    assert kwargs["right_cam_device"] == "/dev/v4l/by-path/pci-usb-right-video-index4"
+    assert "left_cam_device" not in kwargs
+    assert "right_depth_serial" not in kwargs
+    assert kwargs["realsense_capture"] == "process"
+    assert kwargs["depth_fps"] == 30
+
+
+def test_named_profiles_are_isolated_and_ambiguous_implicit_selection_fails(
+    rig: RigConfig, isolated_paths: Path
+) -> None:
+    left_path = save_rig(rig, profile="jay-left")
+    right_rig = RigConfig(**{**rig.as_dict(), "left_channel": "can2", "right_channel": "can3"})
+    right_path = save_rig(right_rig, profile="jay-right")
+
+    assert left_path == config.rig_path("jay-left")
+    assert right_path == config.rig_path("jay-right")
+    assert load_rig(profile="jay-left") == rig
+    assert load_rig(profile="jay-right") == right_rig
+    assert config.resolve_rig_path("jay-left") == left_path
+    with pytest.raises(ValueError, match="multiple rig profiles"):
+        config.resolve_rig_path()
+
+
+@pytest.mark.parametrize("profile", ["", "../escape", "a/b", "with space"])
+def test_named_profile_cannot_escape_config_home(profile: str, isolated_paths: Path) -> None:
+    with pytest.raises(ValueError, match="rig profile"):
+        config.rig_path(profile)

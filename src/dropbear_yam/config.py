@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ _ARM_HIGH = (3.05433, 3.65, 3.66519, 1.5708, 1.5708, 2.0944, 1.0)
 I2RT_JOINT_LOW: tuple[float, ...] = _ARM_LOW * 2
 I2RT_JOINT_HIGH: tuple[float, ...] = _ARM_HIGH * 2
 STRICT_STEP_LIMITS: tuple[float, ...] = ((0.2,) * 6 + (1.0,)) * 2
+REALSENSE_PREFIX = "realsense:"
+_RIG_PROFILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
 def config_home() -> Path:
@@ -35,8 +38,63 @@ def state_home() -> Path:
     return Path.home() / ".local" / "state" / "dropbear-yam"
 
 
-def rig_path() -> Path:
-    return config_home() / "rig.toml"
+def rig_path(profile: str | None = None) -> Path:
+    """Return the legacy path or one traversal-safe named rig path."""
+    if profile is None:
+        return config_home() / "rig.toml"
+    if not _RIG_PROFILE.fullmatch(profile):
+        raise ValueError(
+            "rig profile must start with a letter or number and contain only "
+            "letters, numbers, '.', '_' or '-'"
+        )
+    return config_home() / "rigs" / f"{profile}.toml"
+
+
+def rig_profiles() -> dict[str, Path]:
+    """Return every configured rig without guessing among multiple physical rigs."""
+    profiles: dict[str, Path] = {}
+    legacy = rig_path()
+    if legacy.exists():
+        profiles["legacy"] = legacy
+    directory = config_home() / "rigs"
+    try:
+        entries = sorted(directory.glob("*.toml"))
+    except OSError:
+        entries = []
+    for entry in entries:
+        profiles[entry.stem] = entry
+    return profiles
+
+
+def resolve_rig_path(profile: str | None = None) -> Path:
+    """Resolve an explicit rig, or the only configured rig on the host."""
+    if profile is not None:
+        return rig_path(profile)
+    configured = rig_profiles()
+    if not configured:
+        return rig_path()
+    if len(configured) == 1:
+        return next(iter(configured.values()))
+    names = ", ".join(sorted(configured))
+    raise ValueError(f"multiple rig profiles are configured ({names}); pass --rig NAME")
+
+
+def camera_source(source: str) -> tuple[str, str]:
+    """Split one stable source into the YAM backend name and backend identity."""
+    if source.startswith(REALSENSE_PREFIX):
+        serial = source.removeprefix(REALSENSE_PREFIX).strip()
+        if not serial:
+            raise ValueError("RealSense camera source requires a serial")
+        return "realsense", serial
+    return "v4l2", source
+
+
+def stable_camera_source(source: str) -> bool:
+    """Whether a source survives Linux device-number changes."""
+    kind, value = camera_source(source)
+    if kind == "realsense":
+        return bool(value)
+    return value.startswith(("/dev/v4l/by-id/", "/dev/v4l/by-path/"))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -103,6 +161,11 @@ class RigConfig:
         devices = (self.top_camera, self.left_camera, self.right_camera)
         if any(not value for value in devices) or len(set(devices)) != 3:
             raise ValueError("three distinct camera role assignments are required")
+        if any(not stable_camera_source(source) for source in devices):
+            raise ValueError(
+                "each camera must use a stable camera source: RealSense serial, "
+                "/dev/v4l/by-id, or /dev/v4l/by-path"
+            )
         channels = (self.left_channel, self.right_channel)
         if any(not value for value in channels) or len(set(channels)) != 2:
             raise ValueError("two distinct CAN role assignments are required")
@@ -112,10 +175,7 @@ class RigConfig:
 
     def yam_kwargs(self) -> dict[str, Any]:
         """Return only arguments owned by the Dreamscale YAM fork."""
-        return {
-            "top_cam_device": self.top_camera,
-            "left_cam_device": self.left_camera,
-            "right_cam_device": self.right_camera,
+        kwargs: dict[str, Any] = {
             "left_channel": self.left_channel,
             "right_channel": self.right_channel,
             "cam_width": self.cam_width,
@@ -138,6 +198,19 @@ class RigConfig:
             "unattended": self.unattended,
             "strict_policy_actions": self.strict_policy_actions,
         }
+        for slot, source in (
+            ("top", self.top_camera),
+            ("left", self.left_camera),
+            ("right", self.right_camera),
+        ):
+            kind, value = camera_source(source)
+            key = f"{slot}_depth_serial" if kind == "realsense" else f"{slot}_cam_device"
+            kwargs[key] = value
+        sources = (self.top_camera, self.left_camera, self.right_camera)
+        if any(camera_source(source)[0] == "realsense" for source in sources):
+            kwargs["realsense_capture"] = "process"
+            kwargs["depth_fps"] = self.control_hz
+        return kwargs
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> RigConfig:
@@ -154,8 +227,10 @@ class RigConfig:
         return cls(**values)
 
 
-def load_rig(path: Path | None = None) -> RigConfig:
-    resolved = path or rig_path()
+def load_rig(path: Path | None = None, *, profile: str | None = None) -> RigConfig:
+    if path is not None and profile is not None:
+        raise ValueError("pass either a rig path or profile, not both")
+    resolved = path or resolve_rig_path(profile)
     try:
         payload = tomllib.loads(resolved.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
@@ -170,9 +245,12 @@ def save_rig(
     rig: RigConfig,
     path: Path | None = None,
     *,
+    profile: str | None = None,
     replace: bool = False,
 ) -> Path:
-    resolved = path or rig_path()
+    if path is not None and profile is not None:
+        raise ValueError("pass either a rig path or profile, not both")
+    resolved = path or rig_path(profile)
     if resolved.exists():
         current = load_rig(resolved)
         if current == rig:

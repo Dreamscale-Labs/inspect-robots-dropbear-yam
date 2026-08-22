@@ -13,7 +13,7 @@ No credentials or rig-specific configuration are stored in this repository.
 On the Linux computer connected to both arms and all three cameras:
 
 ```bash
-git clone --branch v0.1.3 --depth 1 \
+git clone --branch v0.1.4 --depth 1 \
   https://github.com/Dreamscale-Labs/inspect-robots-dropbear-yam.git
 cd inspect-robots-dropbear-yam
 ./setup.sh
@@ -33,22 +33,40 @@ manual virtual environment activation is required.
 
 `setup.sh` is safe to rerun. It installs missing Debian/Ubuntu build prerequisites only after one
 explicit sudo confirmation, installs `uv` when absent, reproduces `uv.lock`, and launches the rig
-interview. Existing confirmed values are kept. To deliberately replace them:
+interview. The first setup gives the physical rig a short name such as `jay-rig-1`. Existing
+confirmed values are kept. To deliberately replace one named rig:
 
 ```bash
-./dropbear-yam setup --reconfigure
+./dropbear-yam setup --rig jay-rig-1 --reconfigure
 ```
+
+Camera discovery probes every color-capable V4L2 node; it does not assume that color is
+`video-index0`. It joins V4L2 and librealsense identities when Linux exposes a common USB port or
+RealSense serial; ambiguous duplicate serials are deliberately kept separate. It prefers
+Robocurve's documented layout—D435 top over V4L2 and each D405 wrist through an isolated
+RealSense process. An
+unambiguous `/dev/v4l/by-id` name is preferred; `/dev/v4l/by-path` is the stable fallback for
+identical cameras with ambiguous or empty serials.
 
 The interview asks only for facts software cannot safely infer:
 
-- which stable `/dev/v4l/by-id/...-video-index0` device is top, left and right;
+- a rig-profile name when the host has none or more than one;
+- which detected stable camera source is top, left and right;
 - which SocketCAN interface controls the left and right arm;
 - measured left/right arm-base `(x, y, z)` and yaw in one rig coordinate frame;
 - measured table-top `z` in that same frame; and
 - Dropbear login, but only when credentials are absent.
 
-It writes `~/.config/dropbear-yam/rig.toml` with permissions `0600`. The file contains no API key.
-Authentication remains in Dropbear's own config.
+It writes `~/.config/dropbear-yam/rigs/<name>.toml` with permissions `0600`. The file contains no
+API key. Authentication remains in Dropbear's own config.
+
+With one configured rig, the short commands above remain unambiguous. On Jay's multi-rig host,
+name the physical rig on every command so the program never guesses:
+
+```bash
+./dropbear-yam doctor --rig jay-rig-1
+./dropbear-yam run --rig jay-rig-1 "Pack container"
+```
 
 ## What doctor proves
 
@@ -64,6 +82,12 @@ authentication, DreamZero-YAM entitlement and target availability, system clock 
 camera roles/shapes/fresh Unix-epoch timestamps, cross-camera skew, CAN state, I2RT model limits,
 measured collision geometry, end-to-end 30 Hz declarations, and the absence of any existing
 Dropbear session.
+
+Camera-source checks accept RealSense serials plus stable `/dev/v4l/by-id` and
+`/dev/v4l/by-path` identities. A raw `/dev/videoN` source is rejected because its number can
+change on replug. Doctor opens the same mixed camera-reader composition used by the live run, but
+never calls hardware preparation or reset, so the motor driver and gripper calibration remain
+behind the later physical-motion gate.
 
 Every failure has a stable `DBY-*` code and blocks `run`. The optional support archive contains the
 doctor result and redacted configuration for self-guided debugging or sharing with Dreamscale.
