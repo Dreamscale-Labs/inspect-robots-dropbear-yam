@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+uv_bin="$(command -v uv || true)"
+if [[ -z "$uv_bin" && -x "${HOME}/.local/bin/uv" ]]; then
+  uv_bin="${HOME}/.local/bin/uv"
+fi
+if [[ -z "$uv_bin" ]]; then
+  echo "uv is missing; run $repo_dir/setup.sh first." >&2
+  exit 2
+fi
+exec "$uv_bin" run --project "$repo_dir" --locked --extra hardware dropbear-yam "$@"

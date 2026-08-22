@@ -1,0 +1,32 @@
+schema_version = 1
+
+[components.composition]
+package = "inspect-robots-dropbear-yam"
+version = "0.1.0"
+
+[components.yam]
+package = "inspect-robots-yam"
+repository = "https://github.com/Dreamscale-Labs/inspect-robots-yam.git"
+commit = "21567e96e4537897e62d542cb04545009be40502"
+release = "v0.33.0-dreamscale.1"
+
+[components.adapter]
+package = "inspect-robots-dropbear"
+repository = "https://github.com/Dreamscale-Labs/inspect-robots-dropbear.git"
+commit = "9d7ca388dff6596b1b46019a77e5217d1dcec3fa"
+version = "0.1.11"
+
+[components.dropbear]
+package = "dropbear"
+version = "0.1.0a10"
+
+[components.inspect_robots]
+package = "inspect-robots"
+repository = "https://github.com/robocurve/inspect-robots.git"
+commit = "d748ed9bebf74e660e9daf319475e57d70d10f23"
+version = "0.53.1"
+
+[components.i2rt]
+package = "i2rt"
+repository = "https://github.com/i2rt-robotics/i2rt.git"
+commit = "ac096928d6899ddf852a71c5e8fbaa6055cd9745"

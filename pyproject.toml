@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inspect-robots-dropbear-yam"
+version = "0.1.0"
+description = "Attended DreamZero-YAM via Dropbear for a bimanual I2RT YAM rig"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+license = "Apache-2.0"
+dependencies = [
+  "dropbear[dreamzero]==0.1.0a10",
+  "inspect-robots @ git+https://github.com/robocurve/inspect-robots.git@d748ed9bebf74e660e9daf319475e57d70d10f23",
+  "inspect-robots-dropbear @ git+https://github.com/Dreamscale-Labs/inspect-robots-dropbear.git@9d7ca388dff6596b1b46019a77e5217d1dcec3fa",
+  "inspect-robots-yam[collision] @ git+https://github.com/Dreamscale-Labs/inspect-robots-yam.git@21567e96e4537897e62d542cb04545009be40502",
+  "numpy>=2.0,<2.5",
+  "tomli-w>=1.2,<2",
+]
+
+[project.optional-dependencies]
+hardware = [
+  "i2rt @ git+https://github.com/i2rt-robotics/i2rt.git@ac096928d6899ddf852a71c5e8fbaa6055cd9745",
+]
+dev = ["pytest>=8.3", "pytest-cov>=6", "ruff>=0.11", "mypy>=1.15"]
+
+[project.scripts]
+dropbear-yam = "dropbear_yam.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dropbear_yam"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv]
+build-constraint-dependencies = ["scikit-build-core<0.10"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["dropbear.*", "inspect_robots_dropbear.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
