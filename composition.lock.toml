@@ -2,7 +2,7 @@ schema_version = 1
 
 [components.composition]
 package = "inspect-robots-dropbear-yam"
-version = "0.1.2"
+version = "0.1.3"
 
 [components.yam]
 package = "inspect-robots-yam"

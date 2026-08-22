@@ -64,8 +64,8 @@ if [[ ! -x "$uv_bin" ]]; then
   exit 2
 fi
 
-"$uv_bin" sync --project "$repo_dir" --locked --extra hardware
-"$uv_bin" run --project "$repo_dir" --locked --extra hardware dropbear-yam setup
+"$uv_bin" sync --project "$repo_dir" --python 3.12 --locked --extra hardware
+"$uv_bin" run --project "$repo_dir" --python 3.12 --locked --extra hardware dropbear-yam setup
 
 echo
 echo "Setup complete. Next run:"
