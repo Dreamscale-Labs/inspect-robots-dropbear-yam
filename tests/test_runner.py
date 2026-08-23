@@ -35,11 +35,13 @@ class FakeEmbodiment:
     def __init__(self) -> None:
         self.commands: list[np.ndarray] = []
         self.validations: list[tuple[np.ndarray, np.ndarray]] = []
+        self.prepare_calls = 0
         self.closed = False
         self.info = SimpleNamespace(action_space=object())
 
     def prepare_observation(self, instruction: str) -> Observation:
-        now = 1_800_000_000.0
+        self.prepare_calls += 1
+        now = 1_800_000_000.0 + self.prepare_calls
         image = np.zeros((360, 640, 3), dtype=np.uint8)
         return Observation(
             images={name: image for name in ("top_cam", "left_cam", "right_cam")},
@@ -62,10 +64,15 @@ class FakeEmbodiment:
 class FakePolicy:
     def __init__(self) -> None:
         self.session_id = "session-owned"
+        self.prepare_calls = 0
         self.reset_calls: list[Scene] = []
         self.predict_calls = 0
+        self.predicted_observations: list[Observation] = []
         self.act_calls = 0
         self.closed = False
+
+    def prepare(self) -> None:
+        self.prepare_calls += 1
 
     def reset(self, scene: Scene) -> None:
         self.reset_calls.append(scene)
@@ -80,6 +87,7 @@ class FakePolicy:
 
     def predict_model_action(self, observation: Observation, *, instruction: str) -> Action:
         self.predict_calls += 1
+        self.predicted_observations.append(observation)
         assert instruction
         assert observation.extra["env_step"] == 0
         return Action(np.zeros(14), {"dropbear_action_source": "model"})
@@ -134,7 +142,10 @@ def test_shadow_inference_is_validated_never_executed_and_session_is_reused(
     result = run("move the blue cup", rig, deps=deps, lock_path=lock, max_steps=2)
 
     assert result == 0
+    assert policy.prepare_calls == 1
     assert policy.predict_calls == 1
+    assert embodiment.prepare_calls == 2
+    assert policy.predicted_observations[0].image_times["top_cam"] == 1_800_000_002.0
     assert policy.act_calls == 0
     assert [scene.id for scene in policy.reset_calls] == ["jay-attended"]
     assert len(embodiment.validations) == 1
@@ -143,7 +154,7 @@ def test_shadow_inference_is_validated_never_executed_and_session_is_reused(
     assert embodiment.closed is True
     assert policy.closed is True
     assert shadow_path(configuration_digest(rig, lock)).exists()
-    assert loading == ["Starting Dropbear compute"]
+    assert loading == ["Starting Dropbear compute (a cold start can take a few minutes)"]
 
 
 def test_run_closes_both_objects_and_forced_cleanup_exits_nonzero(
