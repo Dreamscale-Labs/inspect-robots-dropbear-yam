@@ -359,13 +359,18 @@ def run(
         digest = configuration_digest(rig, lock_path)
         if not _shadow_passed(digest):
             deps.output("Running one non-commanding shadow inference for this configuration.")
-            with deps.loading("Starting Dropbear compute"):
+            with deps.loading("Starting Dropbear compute (a cold start can take a few minutes)"):
+                policy.prepare()
+                # Starting a cold worker may take minutes. Reacquire all camera
+                # frames and joint state only after it is ready so the shadow
+                # request never sends the pre-start observation after it aged.
+                prepared = embodiment.prepare_observation(instruction)
                 _run_shadow(instruction, prepared, embodiment, policy, digest)
             deps.output(f"Shadow validation passed: {shadow_path(digest)}")
         else:
             deps.output("Shadow validation already passed for this exact configuration.")
-            with deps.loading("Starting Dropbear compute"):
-                policy.reset(Scene(id="startup", instruction=instruction))
+            with deps.loading("Starting Dropbear compute (a cold start can take a few minutes)"):
+                policy.prepare()
 
         task = Task(
             name="jay-dreamzero-yam",

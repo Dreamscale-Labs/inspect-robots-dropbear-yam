@@ -45,6 +45,9 @@ class FakeDropbearPolicy:
     def reset(self, _scene: Scene) -> None:
         return None
 
+    def prepare(self) -> None:
+        return None
+
     def predict_model_action(self, observation, *, instruction: str) -> Action:
         assert instruction
         return Action(
