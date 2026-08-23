@@ -224,9 +224,13 @@ class RigConfig:
             "strict_policy_actions": self.strict_policy_actions,
             # DreamZero-YAM's raw continuous gripper outputs legitimately
             # overshoot I2RT's normalized calibrated stroke. The fork projects
-            # only those two slots to physical endpoints and records the change;
-            # all six arm joints per side remain strict abort-only targets.
+            # only those two slots to physical endpoints and records the change.
             "strict_gripper_endpoint_projection": True,
+            # Preserve the standard YAM joint-limit backstop explicitly: only
+            # an affected arm target is projected to its configured endpoint,
+            # requested/applied values are recorded, and the strict 0.2-rad
+            # jump abort still runs before any command.
+            "strict_arm_endpoint_projection": True,
         }
         if self.collision_guardrail:
             kwargs.update(

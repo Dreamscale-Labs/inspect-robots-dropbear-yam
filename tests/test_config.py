@@ -32,12 +32,13 @@ def test_rig_round_trip_is_fixed_attended_strict_30_hz(
     assert loaded.keep_warm == 0
     assert loaded.strict_policy_actions is True
     assert loaded.yam_kwargs()["strict_gripper_endpoint_projection"] is True
+    assert loaded.yam_kwargs()["strict_arm_endpoint_projection"] is True
     assert loaded.joints_are_delta is False
     assert loaded.joint_low == I2RT_JOINT_LOW
     assert loaded.joint_high == I2RT_JOINT_HIGH
 
 
-def test_generated_bounds_accept_pinned_i2rt_runtime_command_boundary_without_rewriting(
+def test_generated_bounds_accept_boundary_and_explicitly_project_arm_overshoot(
     rig: RigConfig,
 ) -> None:
     raw_low = np.asarray((-2.61799, 0.0, 0.0, -1.5708, -1.5708, -2.0944))
@@ -61,8 +62,15 @@ def test_generated_bounds_accept_pinned_i2rt_runtime_command_boundary_without_re
 
     outside = np.tile(expected_arm_low, 2)
     outside[0] = np.nextafter(outside[0], -np.inf)
-    with pytest.raises(SafetyAbort, match=r"outside.*left_j0"):
-        embodiment.validate_policy_action(Action(outside), reference=outside)
+    projected = embodiment.validate_policy_action(
+        Action(outside), reference=np.tile(expected_arm_low, 2)
+    )
+    assert projected[0] == expected_arm_low[0]
+
+    gross = np.tile(expected_arm_low, 2)
+    gross[0] = 100.0
+    with pytest.raises(SafetyAbort, match=r"jump.*left_j0"):
+        embodiment.validate_policy_action(Action(gross), reference=np.tile(expected_arm_low, 2))
 
 
 @pytest.mark.parametrize(

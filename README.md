@@ -61,8 +61,10 @@ The interview asks only for facts software cannot safely infer:
 
 If you answer `n` to collision geometry, those measurements are omitted. The run still enforces
 the pinned joint bounds, finite 14-value actions, strict first/subsequent action-jump limits and
-abort-only behavior. It simply cannot predict arm/arm or arm/table contact from a geometric model.
-You can add geometry later with `./dropbear-yam setup --reconfigure`.
+fail-closed behavior. At a configured arm endpoint, the explicit projection described below keeps
+the command within that bound while recording the requested and applied values. It simply cannot
+predict arm/arm or arm/table contact from a geometric model. You can add geometry later with
+`./dropbear-yam setup --reconfigure`.
 
 It writes `~/.config/dropbear-yam/rigs/default.toml` with permissions `0600`. The file contains no
 API key. Authentication remains in Dropbear's own config. To configure an additional physical
@@ -125,11 +127,12 @@ After that confirmation the program:
    `async_latest` hold cannot satisfy this shadow check);
 3. reuses the same hardware connection and, when shadow was needed, the same Dropbear session;
 4. retains the YAM fork's stand-clear homing prompt and scene-ready prompt;
-5. runs Inspect Robots programmatically with abort-only strict arm-action guards and, when
-   configured, predictive collision guards—no arm clamp, interpolation, hold substitution or
-   action rewriting. DreamZero-YAM's two raw continuous gripper slots are the explicit exception:
-   values outside I2RT's calibrated `[0, 1]` stroke are projected to the nearest safe endpoint,
-   announced once per trial and recorded in step telemetry; and
+5. runs Inspect Robots programmatically with strict arm-action guards and, when configured,
+   predictive collision guards—no interpolation or hold substitution. Two explicit endpoint
+   backstops are operator-visible and recorded: raw continuous gripper overshoot projects to the
+   calibrated physical stroke, and an out-of-range arm target projects to its configured joint
+   endpoint before the 0.2-rad jump check. Malformed, non-finite, excessive-jump and collision
+   rejections still abort without sending; and
 6. synchronously closes hardware and policy on success, abort, exception, signal or operator stop,
    then verifies that the exact owned Dropbear session disappeared.
 
