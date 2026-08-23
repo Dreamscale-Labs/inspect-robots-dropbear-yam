@@ -57,15 +57,26 @@ def test_doctor_json_has_stable_schema_and_never_receives_motion_or_session_fact
     assert json.loads(report.to_json())["ok"] is True
 
 
-def test_doctor_reports_cross_camera_skew_without_blocking_or_warning(rig) -> None:
+def test_doctor_warns_on_cross_camera_skew_without_blocking(rig) -> None:
     report = doctor(rig, deps=_deps(rig, skew=0.2))
     by_code = {check.code: check for check in report.checks}
 
     timestamps = by_code["DBY-CAMERA-TIMESTAMPS"]
     assert report.ok is True
-    assert timestamps.status == "pass"
+    assert timestamps.status == "warn"
     assert timestamps.details["skew_ms"] == pytest.approx(200.0)
     assert "200.0 ms" in timestamps.summary
+
+
+def test_doctor_passes_camera_skew_at_exactly_fifty_ms(rig) -> None:
+    report = doctor(rig, deps=_deps(rig, skew=0.05))
+    timestamps = next(
+        check for check in report.checks if check.code == "DBY-CAMERA-TIMESTAMPS"
+    )
+
+    assert report.ok is True
+    assert timestamps.status == "pass"
+    assert timestamps.details["skew_ms"] == pytest.approx(50.0)
 
 
 def test_doctor_blocks_existing_session(rig) -> None:
@@ -73,7 +84,7 @@ def test_doctor_blocks_existing_session(rig) -> None:
     by_code = {check.code: check for check in report.checks}
 
     assert report.ok is False
-    assert by_code["DBY-CAMERA-TIMESTAMPS"].status == "pass"
+    assert by_code["DBY-CAMERA-TIMESTAMPS"].status == "warn"
     assert by_code["DBY-SESSION-CLEAR"].status == "fail"
 
 

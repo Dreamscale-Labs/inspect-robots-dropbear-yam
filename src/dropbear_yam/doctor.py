@@ -32,6 +32,7 @@ Status = Literal["pass", "fail", "warn"]
 CAMERA_NAMES = ("top_cam", "left_cam", "right_cam")
 MAX_IMAGE_AGE_S = 5.0
 MAX_IMAGE_FUTURE_S = 1.0
+CAMERA_SKEW_WARN_S = 0.05
 
 
 @dataclass(frozen=True)
@@ -265,8 +266,13 @@ def _fail(code: str, summary: str, remediation: str) -> Diagnostic:
     return Diagnostic(code, "fail", summary, remediation)
 
 
-def _warn(code: str, summary: str, remediation: str) -> Diagnostic:
-    return Diagnostic(code, "warn", summary, remediation)
+def _warn(
+    code: str,
+    summary: str,
+    remediation: str,
+    details: dict[str, Any] | None = None,
+) -> Diagnostic:
+    return Diagnostic(code, "warn", summary, remediation, details or {})
 
 
 def _camera_checks(rig: RigConfig, deps: DoctorDependencies) -> list[Diagnostic]:
@@ -344,14 +350,29 @@ def _camera_checks(rig: RigConfig, deps: DoctorDependencies) -> list[Diagnostic]
         )
     else:
         skew_ms = (max(times.values()) - min(times.values())) * 1_000
-        checks.append(
-            _pass(
-                "DBY-CAMERA-TIMESTAMPS",
-                f"Unix-epoch source timestamps are fresh; observed camera skew is "
-                f"{skew_ms:.1f} ms",
-                {"image_times": times, "skew_ms": skew_ms},
-            )
+        summary = (
+            f"Unix-epoch source timestamps are fresh; observed camera skew is "
+            f"{skew_ms:.1f} ms"
         )
+        details = {"image_times": times, "skew_ms": skew_ms}
+        if skew_ms > CAMERA_SKEW_WARN_S * 1_000:
+            checks.append(
+                _warn(
+                    "DBY-CAMERA-TIMESTAMPS",
+                    summary,
+                    "No action is required to continue. If this is much larger than usual, "
+                    "close other camera programs, reconnect the cameras, and rerun doctor",
+                    details,
+                )
+            )
+        else:
+            checks.append(
+                _pass(
+                "DBY-CAMERA-TIMESTAMPS",
+                    summary,
+                    details,
+                )
+            )
     return checks
 
 

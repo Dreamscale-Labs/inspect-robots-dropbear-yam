@@ -101,9 +101,9 @@ change on replug. Doctor opens the same mixed camera-reader composition used by 
 never calls hardware preparation or reset, so the motor driver and gripper calibration remain
 behind the later physical-motion gate.
 
-Doctor reports the measured cross-camera timestamp spread for observability. It does not fail or
-warn on that spread; the required camera contract is that each source timestamp is valid and each
-frame is individually fresh.
+Doctor reports the measured cross-camera timestamp spread for observability. A spread above 50 ms
+is a non-blocking warning, not an inference or motion rejection. The required camera contract is
+that each source timestamp is valid and each frame is individually fresh.
 
 Every failure has a stable `DBY-*` code and blocks `run`. The optional support archive contains the
 doctor result and redacted configuration for self-guided debugging or sharing with Dreamscale.
