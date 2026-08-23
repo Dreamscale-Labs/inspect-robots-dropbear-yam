@@ -11,10 +11,16 @@ from typing import Any
 
 import tomli_w
 
-# Raw ArmType.YAM limits from i2rt's pinned robot_models/arm/yam/yam.xml.
-# Gripper slots use the adapter's normalized [0, 1] policy units.
-_ARM_LOW = (-2.61799, 0.0, 0.0, -1.5708, -1.5708, -2.0944, 0.0)
-_ARM_HIGH = (3.05433, 3.65, 3.66519, 1.5708, 1.5708, 2.0944, 1.0)
+_LEGACY_XML_ARM_LOW = (-2.61799, 0.0, 0.0, -1.5708, -1.5708, -2.0944, 0.0)
+_LEGACY_XML_ARM_HIGH = (3.05433, 3.65, 3.66519, 1.5708, 1.5708, 2.0944, 1.0)
+_LEGACY_XML_JOINT_LOW = _LEGACY_XML_ARM_LOW * 2
+_LEGACY_XML_JOINT_HIGH = _LEGACY_XML_ARM_HIGH * 2
+# Pinned i2rt expands the six raw ArmType.YAM XML arm ranges by this exact
+# float64 operation before clipping commands. Derive rather than transcribe the
+# endpoints so every accepted boundary passes through i2rt bit-for-bit.
+_I2RT_BOUND_BUFFER = 0.15
+_ARM_LOW = tuple(value - _I2RT_BOUND_BUFFER for value in _LEGACY_XML_ARM_LOW[:6]) + (0.0,)
+_ARM_HIGH = tuple(value + _I2RT_BOUND_BUFFER for value in _LEGACY_XML_ARM_HIGH[:6]) + (1.0,)
 I2RT_JOINT_LOW: tuple[float, ...] = _ARM_LOW * 2
 I2RT_JOINT_HIGH: tuple[float, ...] = _ARM_HIGH * 2
 STRICT_STEP_LIMITS: tuple[float, ...] = ((0.2,) * 6 + (1.0,)) * 2
@@ -111,7 +117,7 @@ class RigConfig:
     collision_left_base_yaw: float | None = None
     collision_right_base_yaw: float | None = None
     collision_table_height: float | None = None
-    schema_version: int = 1
+    schema_version: int = 2
     model_target: str = "dreamzero-yam"
     cam_width: int = 640
     cam_height: int = 360
@@ -130,7 +136,7 @@ class RigConfig:
     strict_policy_actions: bool = True
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1:
+        if self.schema_version != 2:
             raise ValueError("unsupported rig schema_version")
         if self.model_target != "dreamzero-yam":
             raise ValueError("model_target must be dreamzero-yam")
@@ -270,6 +276,75 @@ def load_rig(path: Path | None = None, *, profile: str | None = None) -> RigConf
     return RigConfig.from_dict(raw)
 
 
+def migrate_generated_rig(path: Path) -> bool:
+    """Upgrade the generated v1 XML bounds without changing rig assignments."""
+    try:
+        payload = tomllib.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False
+    raw = payload.get("rig")
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path} has no [rig] table")
+    if raw.get("schema_version") == 2:
+        return False
+    field_names = {field.name for field in dataclasses.fields(RigConfig)}
+    optional_geometry = {
+        "collision_left_base_pos",
+        "collision_right_base_pos",
+        "collision_left_base_yaw",
+        "collision_right_base_yaw",
+        "collision_table_height",
+    }
+    variable_fields = {
+        "top_camera",
+        "left_camera",
+        "right_camera",
+        "left_channel",
+        "right_channel",
+        "collision_guardrail",
+        "collision_table",
+        *optional_geometry,
+    }
+    fixed_values = {
+        field.name: field.default
+        for field in dataclasses.fields(RigConfig)
+        if field.name not in variable_fields
+        and field.name not in {"schema_version", "joint_low", "joint_high"}
+    }
+    normalized_fixed = {
+        name: tuple(raw[name]) if isinstance(expected, tuple) and name in raw else raw.get(name)
+        for name, expected in fixed_values.items()
+    }
+    if (
+        set(payload) != {"rig"}
+        or not (field_names - optional_geometry <= set(raw) <= field_names)
+        or raw.get("schema_version") != 1
+        or tuple(raw.get("joint_low", ())) != _LEGACY_XML_JOINT_LOW
+        or tuple(raw.get("joint_high", ())) != _LEGACY_XML_JOINT_HIGH
+        or normalized_fixed != fixed_values
+    ):
+        raise ValueError(
+            f"{path} uses an unsupported rig format; run dropbear-yam setup --reconfigure"
+        )
+    updated = {
+        **raw,
+        "schema_version": 2,
+        "joint_low": I2RT_JOINT_LOW,
+        "joint_high": I2RT_JOINT_HIGH,
+    }
+    _write_rig(RigConfig.from_dict(updated), path)
+    return True
+
+
+def _write_rig(rig: RigConfig, resolved: Path) -> None:
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    temporary = resolved.with_suffix(".toml.tmp")
+    serialized = {key: value for key, value in rig.as_dict().items() if value is not None}
+    temporary.write_text(tomli_w.dumps({"rig": serialized}), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, resolved)
+
+
 def save_rig(
     rig: RigConfig,
     path: Path | None = None,
@@ -288,10 +363,5 @@ def save_rig(
             raise FileExistsError(
                 f"confirmed rig already exists at {resolved}; use --reconfigure to replace it"
             )
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    temporary = resolved.with_suffix(".toml.tmp")
-    serialized = {key: value for key, value in rig.as_dict().items() if value is not None}
-    temporary.write_text(tomli_w.dumps({"rig": serialized}), encoding="utf-8")
-    os.chmod(temporary, 0o600)
-    os.replace(temporary, resolved)
+    _write_rig(rig, resolved)
     return resolved

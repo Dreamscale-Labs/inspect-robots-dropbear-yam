@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
+from inspect_robots.errors import SafetyAbort
+from inspect_robots.types import Action
+from inspect_robots_yam import YamConfig, YAMEmbodiment
 
 import dropbear_yam.config as config
 from dropbear_yam.config import (
@@ -30,6 +34,34 @@ def test_rig_round_trip_is_fixed_attended_strict_30_hz(
     assert loaded.joints_are_delta is False
     assert loaded.joint_low == I2RT_JOINT_LOW
     assert loaded.joint_high == I2RT_JOINT_HIGH
+
+
+def test_generated_bounds_accept_pinned_i2rt_runtime_command_boundary_without_rewriting(
+    rig: RigConfig,
+) -> None:
+    raw_low = np.asarray((-2.61799, 0.0, 0.0, -1.5708, -1.5708, -2.0944))
+    raw_high = np.asarray((3.05433, 3.65, 3.66519, 1.5708, 1.5708, 2.0944))
+    expected_arm_low = np.concatenate((raw_low - 0.15, (0.0,)))
+    expected_arm_high = np.concatenate((raw_high + 0.15, (1.0,)))
+    assert rig.schema_version == 2
+    np.testing.assert_array_equal(rig.joint_low, np.tile(expected_arm_low, 2))
+    np.testing.assert_array_equal(rig.joint_high, np.tile(expected_arm_high, 2))
+
+    embodiment = YAMEmbodiment(YamConfig(**rig.yam_kwargs()))
+    for target in (np.tile(expected_arm_low, 2), np.tile(expected_arm_high, 2)):
+        validated = embodiment.validate_policy_action(Action(target), reference=target)
+        driver_result = np.clip(
+            validated,
+            np.tile(expected_arm_low, 2),
+            np.tile(expected_arm_high, 2),
+        )
+        np.testing.assert_array_equal(validated, target)
+        np.testing.assert_array_equal(driver_result, target)
+
+    outside = np.tile(expected_arm_low, 2)
+    outside[0] = np.nextafter(outside[0], -np.inf)
+    with pytest.raises(SafetyAbort, match=r"outside.*left_j0"):
+        embodiment.validate_policy_action(Action(outside), reference=outside)
 
 
 @pytest.mark.parametrize(

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inspect-robots-dropbear-yam"
-version = "0.1.12"
+version = "0.1.13"
 description = "Attended DreamZero-YAM via Dropbear for a bimanual I2RT YAM rig"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
