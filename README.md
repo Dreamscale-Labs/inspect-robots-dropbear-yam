@@ -125,8 +125,11 @@ After that confirmation the program:
    `async_latest` hold cannot satisfy this shadow check);
 3. reuses the same hardware connection and, when shadow was needed, the same Dropbear session;
 4. retains the YAM fork's stand-clear homing prompt and scene-ready prompt;
-5. runs Inspect Robots programmatically with abort-only strict action guards and, when configured,
-   predictive collision guards—no clamp, interpolation, hold substitution or action rewriting; and
+5. runs Inspect Robots programmatically with abort-only strict arm-action guards and, when
+   configured, predictive collision guards—no arm clamp, interpolation, hold substitution or
+   action rewriting. DreamZero-YAM's two raw continuous gripper slots are the explicit exception:
+   values outside I2RT's calibrated `[0, 1]` stroke are projected to the nearest safe endpoint,
+   announced once per trial and recorded in step telemetry; and
 6. synchronously closes hardware and policy on success, abort, exception, signal or operator stop,
    then verifies that the exact owned Dropbear session disappeared.
 

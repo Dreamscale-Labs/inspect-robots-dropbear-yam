@@ -31,6 +31,7 @@ def test_rig_round_trip_is_fixed_attended_strict_30_hz(
     assert loaded.unattended is False
     assert loaded.keep_warm == 0
     assert loaded.strict_policy_actions is True
+    assert loaded.yam_kwargs()["strict_gripper_endpoint_projection"] is True
     assert loaded.joints_are_delta is False
     assert loaded.joint_low == I2RT_JOINT_LOW
     assert loaded.joint_high == I2RT_JOINT_HIGH

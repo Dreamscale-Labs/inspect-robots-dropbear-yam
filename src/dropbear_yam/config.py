@@ -222,6 +222,11 @@ class RigConfig:
             "auto_start": self.auto_start,
             "unattended": self.unattended,
             "strict_policy_actions": self.strict_policy_actions,
+            # DreamZero-YAM's raw continuous gripper outputs legitimately
+            # overshoot I2RT's normalized calibrated stroke. The fork projects
+            # only those two slots to physical endpoints and records the change;
+            # all six arm joints per side remain strict abort-only targets.
+            "strict_gripper_endpoint_projection": True,
         }
         if self.collision_guardrail:
             kwargs.update(
