@@ -91,15 +91,19 @@ configured, name the physical rig on every command so the program never guesses:
 Doctor performs no robot motion, does not construct the I2RT motor driver, and creates no Dropbear
 model session. It checks the exact locked package commits, Linux/build prerequisites,
 authentication, DreamZero-YAM entitlement and target availability, system clock synchronization,
-camera roles/shapes/fresh Unix-epoch timestamps, cross-camera skew, CAN state, I2RT model limits,
-the selected collision-checking mode, end-to-end 30 Hz declarations, and the absence of any existing
-Dropbear session.
+camera roles/shapes/fresh Unix-epoch timestamps, observed cross-camera skew, CAN state, I2RT model
+limits, the selected collision-checking mode, end-to-end 30 Hz declarations, and the absence of any
+existing Dropbear session.
 
 Camera-source checks accept RealSense serials plus stable `/dev/v4l/by-id` and
 `/dev/v4l/by-path` identities. A raw `/dev/videoN` source is rejected because its number can
 change on replug. Doctor opens the same mixed camera-reader composition used by the live run, but
 never calls hardware preparation or reset, so the motor driver and gripper calibration remain
 behind the later physical-motion gate.
+
+Doctor reports the measured cross-camera timestamp spread for observability. It does not fail or
+warn on that spread; the required camera contract is that each source timestamp is valid and each
+frame is individually fresh.
 
 Every failure has a stable `DBY-*` code and blocks `run`. The optional support archive contains the
 doctor result and redacted configuration for self-guided debugging or sharing with Dreamscale.

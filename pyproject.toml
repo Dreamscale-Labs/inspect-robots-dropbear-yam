@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inspect-robots-dropbear-yam"
-version = "0.1.7"
+version = "0.1.8"
 description = "Attended DreamZero-YAM via Dropbear for a bimanual I2RT YAM rig"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 license = "Apache-2.0"
 dependencies = [
-  "dropbear[dreamzero]==0.1.0a10",
+  "dropbear[dreamzero]==0.1.0a11",
   "inspect-robots @ git+https://github.com/robocurve/inspect-robots.git@d748ed9bebf74e660e9daf319475e57d70d10f23",
-  "inspect-robots-dropbear @ git+https://github.com/Dreamscale-Labs/inspect-robots-dropbear.git@01a43f73eb6134d4bc9b627be4bff503179078a3",
+  "inspect-robots-dropbear @ git+https://github.com/Dreamscale-Labs/inspect-robots-dropbear.git@8b6e5c19cdda9dcc3a667c20609cabc57f206655",
   "inspect-robots-yam[collision] @ git+https://github.com/Dreamscale-Labs/inspect-robots-yam.git@fb0b2694927360379043f17b6c9b4cf7acca0a6d",
   "numpy>=2.0,<2.5",
   "tomli-w>=1.2,<2",

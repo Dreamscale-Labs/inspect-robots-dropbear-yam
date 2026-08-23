@@ -32,7 +32,6 @@ Status = Literal["pass", "fail", "warn"]
 CAMERA_NAMES = ("top_cam", "left_cam", "right_cam")
 MAX_IMAGE_AGE_S = 5.0
 MAX_IMAGE_FUTURE_S = 1.0
-MAX_CAMERA_SKEW_S = 0.05
 
 
 @dataclass(frozen=True)
@@ -334,8 +333,6 @@ def _camera_checks(rig: RigConfig, deps: DoctorDependencies) -> list[Diagnostic]
         reason = "At least one camera image is more than 5 seconds old"
     elif any(value - now > MAX_IMAGE_FUTURE_S for value in times.values()):
         reason = "At least one camera capture time is incorrectly in the future"
-    elif max(times.values()) - min(times.values()) > MAX_CAMERA_SKEW_S:
-        reason = "The three camera images were captured more than 50 ms apart"
     if reason:
         checks.append(
             _fail(
@@ -346,11 +343,13 @@ def _camera_checks(rig: RigConfig, deps: DoctorDependencies) -> list[Diagnostic]
             )
         )
     else:
+        skew_ms = (max(times.values()) - min(times.values())) * 1_000
         checks.append(
             _pass(
                 "DBY-CAMERA-TIMESTAMPS",
-                "Unix-epoch source timestamps are fresh and mutually aligned",
-                {"image_times": times},
+                f"Unix-epoch source timestamps are fresh; observed camera skew is "
+                f"{skew_ms:.1f} ms",
+                {"image_times": times, "skew_ms": skew_ms},
             )
         )
     return checks
