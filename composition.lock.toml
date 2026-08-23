@@ -2,7 +2,7 @@ schema_version = 1
 
 [components.composition]
 package = "inspect-robots-dropbear-yam"
-version = "0.1.11"
+version = "0.1.12"
 
 [components.yam]
 package = "inspect-robots-yam"
@@ -13,12 +13,12 @@ release = "v0.33.0+dreamscale.1"
 [components.adapter]
 package = "inspect-robots-dropbear"
 repository = "https://github.com/Dreamscale-Labs/inspect-robots-dropbear.git"
-commit = "17dbbf19071d4d58e8ea91199a1b2bc2342b5b12"
-version = "0.1.15"
+commit = "52bfe8b277e225c032b186de00a14f4d9decb1e0"
+version = "0.1.16"
 
 [components.dropbear]
 package = "dropbear"
-version = "0.1.0a12"
+version = "0.1.0a13"
 
 [components.inspect_robots]
 package = "inspect-robots"

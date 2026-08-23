@@ -729,7 +729,7 @@ wheels = [
 
 [[package]]
 name = "dropbear"
-version = "0.1.0a12"
+version = "0.1.0a13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dropbear-transport" },
@@ -741,9 +741,9 @@ dependencies = [
     { name = "typer" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/63/89/a9acd729f23a9f678cd4fcad8d95d298eaf306093a26ad13f485217043bd/dropbear-0.1.0a12.tar.gz", hash = "sha256:95a655ab10f9009447b0f0fd76f9989e5336bac5e315aeb3fff73010ecc272b3", size = 159151, upload-time = "2026-08-23T08:37:05.481Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/71/70d3a639323199c70ae4cf325c71c5ad3f9e0eae7c00374ed167ec5c504b/dropbear-0.1.0a13.tar.gz", hash = "sha256:162f31214d7c294ec009e498161cffada45312952f15c5f04c3ab1dea9d1ab5c", size = 159252, upload-time = "2026-08-23T09:10:22.7Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/3f/67b5da8c2842e5e771ee08da06894f46fc604f1c0428e99e41299f83bee3/dropbear-0.1.0a12-py3-none-any.whl", hash = "sha256:a57e3406cb203a3dc6af24827f9c847894163419c3ffdfda53db6c8dea695ead", size = 181282, upload-time = "2026-08-23T08:37:03.942Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/5d/df031970ebdabbd5be712da681f475c88db362a34495d918d6d043447cd0/dropbear-0.1.0a13-py3-none-any.whl", hash = "sha256:4aa46f429312dc3ba5c6872d68e7f4f92d0b11728a05892ac5af11cb2fce428d", size = 181328, upload-time = "2026-08-23T09:10:21.12Z" },
 ]
 
 [package.optional-dependencies]
@@ -913,8 +913,8 @@ dependencies = [
 
 [[package]]
 name = "inspect-robots-dropbear"
-version = "0.1.15"
-source = { git = "https://github.com/Dreamscale-Labs/inspect-robots-dropbear.git?rev=17dbbf19071d4d58e8ea91199a1b2bc2342b5b12#17dbbf19071d4d58e8ea91199a1b2bc2342b5b12" }
+version = "0.1.16"
+source = { git = "https://github.com/Dreamscale-Labs/inspect-robots-dropbear.git?rev=52bfe8b277e225c032b186de00a14f4d9decb1e0#52bfe8b277e225c032b186de00a14f4d9decb1e0" }
 dependencies = [
     { name = "dropbear", extra = ["dreamzero"] },
     { name = "inspect-robots" },
@@ -923,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "inspect-robots-dropbear-yam"
-version = "0.1.11"
+version = "0.1.12"
 source = { editable = "." }
 dependencies = [
     { name = "dropbear", extra = ["dreamzero"] },
@@ -948,10 +948,10 @@ hardware = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dropbear", extras = ["dreamzero"], specifier = "==0.1.0a12" },
+    { name = "dropbear", extras = ["dreamzero"], specifier = "==0.1.0a13" },
     { name = "i2rt", marker = "extra == 'hardware'", git = "https://github.com/i2rt-robotics/i2rt.git?rev=ac096928d6899ddf852a71c5e8fbaa6055cd9745" },
     { name = "inspect-robots", git = "https://github.com/robocurve/inspect-robots.git?rev=d748ed9bebf74e660e9daf319475e57d70d10f23" },
-    { name = "inspect-robots-dropbear", git = "https://github.com/Dreamscale-Labs/inspect-robots-dropbear.git?rev=17dbbf19071d4d58e8ea91199a1b2bc2342b5b12" },
+    { name = "inspect-robots-dropbear", git = "https://github.com/Dreamscale-Labs/inspect-robots-dropbear.git?rev=52bfe8b277e225c032b186de00a14f4d9decb1e0" },
     { name = "inspect-robots-yam", extras = ["collision"], git = "https://github.com/Dreamscale-Labs/inspect-robots-yam.git?rev=fb0b2694927360379043f17b6c9b4cf7acca0a6d" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.15" },
     { name = "numpy", specifier = ">=2.0,<2.5" },
