@@ -12,7 +12,14 @@ from typing import Any
 
 from dropbear.config import load_config
 
-from dropbear_yam.config import RigConfig, load_rig, rig_path, rig_profiles, save_rig
+from dropbear_yam.config import (
+    RigConfig,
+    load_rig,
+    migrate_generated_rig,
+    rig_path,
+    rig_profiles,
+    save_rig,
+)
 from dropbear_yam.errors import UserFacingError
 
 _USB_PORT = re.compile(r"(?:^|/)(\d+-\d+(?:\.\d+)*)(?=[:/]|$)")
@@ -336,6 +343,11 @@ def setup(
     deps = deps or SetupDependencies()
     path = _setup_path(rig_name, input_fn=deps.input, output=deps.output)
     if path.exists() and not reconfigure:
+        if migrate_generated_rig(path):
+            deps.output(
+                "Setup updated the generated I2RT joint bounds; camera and CAN assignments "
+                "were kept."
+            )
         load_rig(path)
         if not deps.authenticated():
             deps.output("Dropbear credentials are absent; opening login.")

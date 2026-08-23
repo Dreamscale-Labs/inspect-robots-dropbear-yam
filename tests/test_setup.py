@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import tomli_w
 
 from dropbear_yam.config import load_rig
 from dropbear_yam.errors import UserFacingError
@@ -120,6 +121,89 @@ def test_setup_is_idempotent_and_does_not_prompt_when_rig_exists(rig, isolated_p
 
     assert setup(deps=deps) == expected
     assert load_rig(expected) == rig
+
+
+def test_setup_migrates_generated_xml_bounds_without_reasking_for_rig_assignments(
+    rig, isolated_paths: Path
+) -> None:
+    from dropbear_yam import config
+
+    path = config.rig_path("default")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = {
+        **rig.as_dict(),
+        "schema_version": 1,
+        "joint_low": list(
+            (-2.61799, 0.0, 0.0, -1.5708, -1.5708, -2.0944, 0.0) * 2
+        ),
+        "joint_high": list(
+            (3.05433, 3.65, 3.66519, 1.5708, 1.5708, 2.0944, 1.0) * 2
+        ),
+    }
+    path.write_text(tomli_w.dumps({"rig": legacy}), encoding="utf-8")
+    output: list[str] = []
+    deps = SetupDependencies(
+        discover_cameras=lambda: (_ for _ in ()).throw(AssertionError("discovery called")),
+        discover_can=lambda: (_ for _ in ()).throw(AssertionError("discovery called")),
+        authenticated=lambda: True,
+        login=lambda: (_ for _ in ()).throw(AssertionError("login called")),
+        input=lambda _prompt: (_ for _ in ()).throw(AssertionError("prompted")),
+        output=output.append,
+    )
+
+    assert setup(deps=deps) == path
+
+    migrated = load_rig(path)
+    assert migrated.schema_version == 2
+    assert migrated.top_camera == rig.top_camera
+    assert migrated.left_camera == rig.left_camera
+    assert migrated.right_camera == rig.right_camera
+    assert migrated.left_channel == rig.left_channel
+    assert migrated.right_channel == rig.right_channel
+    assert migrated.joint_low[1:3] == (-0.15, -0.15)
+    assert "updated the generated i2rt joint bounds" in "\n".join(output).lower()
+
+
+@pytest.mark.parametrize("customization", ["gripper", "rig-key", "top-level"])
+def test_setup_refuses_to_silently_migrate_a_customized_v1_rig(
+    rig, isolated_paths: Path, customization: str
+) -> None:
+    from dropbear_yam import config
+
+    path = config.rig_path("default")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = {
+        **rig.as_dict(),
+        "schema_version": 1,
+        "joint_low": list(
+            (-2.61799, 0.0, 0.0, -1.5708, -1.5708, -2.0944, 0.0) * 2
+        ),
+        "joint_high": list(
+            (3.05433, 3.65, 3.66519, 1.5708, 1.5708, 2.0944, 1.0) * 2
+        ),
+    }
+    payload: dict[str, object] = {"rig": legacy}
+    if customization == "gripper":
+        legacy["gripper_type"] = "LINEAR_3507"
+    elif customization == "rig-key":
+        legacy["custom_setting"] = True
+    else:
+        payload["custom"] = {"setting": True}
+    original = tomli_w.dumps(payload)
+    path.write_text(original, encoding="utf-8")
+    deps = SetupDependencies(
+        discover_cameras=lambda: (_ for _ in ()).throw(AssertionError("discovery called")),
+        discover_can=lambda: (_ for _ in ()).throw(AssertionError("discovery called")),
+        authenticated=lambda: True,
+        login=lambda: (_ for _ in ()).throw(AssertionError("login called")),
+        input=lambda _prompt: (_ for _ in ()).throw(AssertionError("prompted")),
+        output=lambda _line: None,
+    )
+
+    with pytest.raises(ValueError, match="unsupported rig format"):
+        setup(deps=deps)
+
+    assert path.read_text(encoding="utf-8") == original
 
 
 def test_discovery_prefers_mixed_documented_realsense_backends_without_index0_assumption() -> None:
