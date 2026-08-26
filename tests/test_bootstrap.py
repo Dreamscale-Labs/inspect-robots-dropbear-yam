@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from importlib.metadata import version
 from pathlib import Path
+
+from dropbear_yam import __version__
 
 
 def test_bootstrap_is_locked_and_has_one_explicit_sudo_confirmation() -> None:
@@ -36,3 +39,7 @@ def test_readme_uses_the_customer_facing_stable_branch_without_a_rig_flag() -> N
     assert "[Y/n]" in readme
     assert "elapsed seconds" in readme
     assert "paid shadow inference" not in readme
+
+
+def test_runtime_version_matches_installed_package_metadata() -> None:
+    assert __version__ == version("inspect-robots-dropbear-yam")
