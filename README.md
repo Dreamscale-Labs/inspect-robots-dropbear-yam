@@ -94,8 +94,9 @@ Doctor performs no robot motion, does not construct the I2RT motor driver, and c
 model session. It checks the exact locked package commits, Linux/build prerequisites,
 authentication, DreamZero-YAM entitlement and target availability, system clock synchronization,
 camera roles/shapes/fresh Unix-epoch timestamps, observed cross-camera skew, CAN state, I2RT model
-limits, the selected collision-checking mode, end-to-end 30 Hz declarations, and the absence of any
-existing Dropbear session.
+limits, the selected collision-checking mode, end-to-end 30 Hz declarations, and the absence of a
+conflicting Dropbear session. Exactly one owned, parked DreamZero-YAM reservation is accepted so
+the next run can reclaim it without another cold start.
 
 Camera-source checks accept RealSense serials plus stable `/dev/v4l/by-id` and
 `/dev/v4l/by-path` identities. A raw `/dev/videoN` source is rejected because its number can
@@ -118,6 +119,18 @@ failures.
 must be ready and that connecting will enable I2RT control traffic and calibrate both
 `LINEAR_4310` grippers. Keep hands clear of the grippers.
 
+By default, the exact loaded Dropbear compute stays warm for up to five minutes after the run so a
+follow-up run can reclaim it. Warm retention is billed at the full rate. Choose any whole number
+from 0 through 60 minutes:
+
+```bash
+./dropbear-yam run --warm=15 "Pack container"
+./dropbear-yam run --warm=0 "Pack container"  # terminate immediately after cleanup
+```
+
+The terminal prints the exact parked session and its stop command. The reservation expires
+automatically at the selected deadline.
+
 After that confirmation the program:
 
 1. opens cameras and I2RT once, performs required gripper calibration, and observes the real
@@ -134,10 +147,12 @@ After that confirmation the program:
    endpoint before the 0.2-rad jump check. Malformed, non-finite, excessive-jump and collision
    rejections still abort without sending; and
 6. synchronously closes hardware and policy on success, abort, exception, signal or operator stop,
-   then verifies that the exact owned Dropbear session disappeared.
+   then verifies that the exact owned Dropbear session parked when `--warm` is positive or
+   disappeared when `--warm=0`.
 
-If ordinary close does not remove that exact session, the program explicitly stops only that
-session and exits nonzero. It never uses a stop-all operation.
+If the requested park does not finish or ordinary zero-warm close does not remove that exact
+session, the program explicitly stops only that session and exits nonzero. It never uses a
+stop-all operation.
 
 Shadow evidence is stored under `~/.local/state/dropbear-yam/shadow/`. Any change to the locked
 package commits, model target, camera/CAN mapping, rig geometry, cadence, joint bounds or step
@@ -161,7 +176,8 @@ Do not proceed without separate authorization for physical motion and inference.
 first short trained task, an operator must stand clear with the e-stop in hand. Acceptance requires
 correct 640x360 camera roles and source times, 30 Hz on both policy and YAM, at least one telemetry
 row whose action source is `model`, no silently changed action, working gates/abort behavior, and
-absence of the exact Dropbear session afterward.
+either a verified exact parked reservation or, with `--warm=0`, absence of the exact Dropbear
+session afterward.
 
 Run logs, frames, actions and adapter telemetry are under `~/.local/state/dropbear-yam/logs/`.
 

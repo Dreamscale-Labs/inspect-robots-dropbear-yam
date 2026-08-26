@@ -101,16 +101,22 @@ class CleanupResult:
     disappeared: bool
     forced: bool
     detail: str = ""
+    parked: bool = False
+
+
+async def _session_row(client: ControlPlaneClient, session_id: str) -> dict[str, Any] | None:
+    sessions = await client.list_sessions()
+    return next((row for row in sessions if str(row.get("session_id")) == session_id), None)
 
 
 async def _session_present(client: ControlPlaneClient, session_id: str) -> bool:
-    sessions = await client.list_sessions()
-    return any(str(row.get("session_id")) == session_id for row in sessions)
+    return await _session_row(client, session_id) is not None
 
 
 async def _cleanup_async(
     session_id: str | None,
     *,
+    keep_warm_s: int = 0,
     grace_s: float = 10.0,
     poll_s: float = 0.5,
 ) -> CleanupResult:
@@ -121,6 +127,43 @@ async def _cleanup_async(
         return CleanupResult(session_id, False, False, "credentials unavailable for verification")
     client = ControlPlaneClient(config.control_plane_url, config.api_key)
     try:
+        if keep_warm_s > 0:
+            deadline = time.monotonic() + grace_s
+            while time.monotonic() < deadline:
+                row = await _session_row(client, session_id)
+                if row is None:
+                    return CleanupResult(
+                        session_id,
+                        True,
+                        False,
+                        "session ended instead of entering the requested warm hold",
+                    )
+                if row.get("status") == "parked":
+                    return CleanupResult(
+                        session_id,
+                        False,
+                        False,
+                        "exact session is parked for warm reuse",
+                        parked=True,
+                    )
+                await asyncio.sleep(poll_s)
+            await client.delete_session(session_id)
+            forced_deadline = time.monotonic() + grace_s
+            while time.monotonic() < forced_deadline:
+                if not await _session_present(client, session_id):
+                    return CleanupResult(
+                        session_id,
+                        True,
+                        True,
+                        "warm parking did not finish; exact session was explicitly stopped",
+                    )
+                await asyncio.sleep(poll_s)
+            return CleanupResult(
+                session_id,
+                False,
+                True,
+                "warm parking did not finish and exact session remained after explicit stop",
+            )
         deadline = time.monotonic() + grace_s
         while time.monotonic() < deadline:
             if not await _session_present(client, session_id):
@@ -149,8 +192,8 @@ async def _cleanup_async(
         await client.close()
 
 
-def cleanup_session(session_id: str | None) -> CleanupResult:
-    return asyncio.run(_cleanup_async(session_id))
+def cleanup_session(session_id: str | None, *, keep_warm_s: int = 0) -> CleanupResult:
+    return asyncio.run(_cleanup_async(session_id, keep_warm_s=keep_warm_s))
 
 
 def _confirm(prompt: str) -> bool:
@@ -211,13 +254,13 @@ def _embodiment(rig: RigConfig) -> Any:
     return YAMEmbodiment(YamConfig(**rig.yam_kwargs()))
 
 
-def _policy(rig: RigConfig) -> Any:
+def _policy(rig: RigConfig, *, keep_warm_s: int) -> Any:
     from inspect_robots_dropbear.policy import DropbearPolicy
 
     return DropbearPolicy(
         model=rig.model_target,
         control_hz=rig.control_hz,
-        keep_warm_s=rig.keep_warm,
+        keep_warm_s=keep_warm_s,
     )
 
 
@@ -232,9 +275,9 @@ class RunDependencies:
     doctor: Callable[[RigConfig], DoctorReport] = run_doctor
     confirm: Callable[[str], bool] = _confirm
     embodiment: Callable[[RigConfig], Any] = _embodiment
-    policy: Callable[[RigConfig], Any] = _policy
+    policy: Callable[..., Any] = _policy
     evaluate: Callable[..., Any] = _evaluate
-    cleanup: Callable[[str | None], CleanupResult] = cleanup_session
+    cleanup: Callable[..., CleanupResult] = cleanup_session
     output: Callable[[str], None] = print
     loading: Callable[[str], contextlib.AbstractContextManager[None]] = _loading_status
 
@@ -308,6 +351,7 @@ def run(
     deps: RunDependencies | None = None,
     lock_path: Path | None = None,
     max_steps: int = 3600,
+    warm_minutes: int = 5,
     log_dir: Path | None = None,
 ) -> int:
     """Run doctor -> physical gate -> shadow -> attended eval -> exact cleanup."""
@@ -337,6 +381,23 @@ def run(
             "Repeat the command with --max-steps 3600 or another positive number",
         )
         return 2
+    if (
+        isinstance(warm_minutes, bool)
+        or not isinstance(warm_minutes, int)
+        or not 0 <= warm_minutes <= 60
+    ):
+        emit_error(
+            deps.output,
+            "--warm must be a whole number from 0 to 60 minutes",
+            "Repeat the command with --warm=5, or use --warm=0 to disable the warm hold",
+        )
+        return 2
+    keep_warm_s = warm_minutes * 60
+    if warm_minutes:
+        deps.output(
+            f"After this run, Dropbear compute will stay warm for up to {warm_minutes} "
+            f"minute{'s' if warm_minutes != 1 else ''}; the warm hold remains billable."
+        )
     if not deps.confirm(
         "E-stop must be in hand and working. Connecting I2RT will enable control "
         "traffic and calibrate both LINEAR_4310 grippers; keep clear of them."
@@ -350,7 +411,7 @@ def run(
     exit_code = 0
     try:
         embodiment = deps.embodiment(rig)
-        policy = deps.policy(rig)
+        policy = deps.policy(rig, keep_warm_s=keep_warm_s)
         prepared = embodiment.prepare_observation(instruction)
         approver = _strict_approver(
             embodiment,
@@ -439,7 +500,7 @@ def run(
                 )
                 exit_code = exit_code or 1
         try:
-            cleanup = deps.cleanup(session_id)
+            cleanup = deps.cleanup(session_id, keep_warm_s=keep_warm_s)
         except BaseException as exc:
             emit_error(
                 deps.output,
@@ -449,7 +510,24 @@ def run(
             )
             exit_code = exit_code or 1
         else:
-            if not cleanup.disappeared:
+            if session_id is None:
+                deps.output("Dropbear cleanup verified: no session was created.")
+            elif keep_warm_s > 0 and cleanup.parked and not cleanup.forced:
+                deps.output(
+                    f"Dropbear compute is warm for up to {warm_minutes} "
+                    f"minute{'s' if warm_minutes != 1 else ''}: {session_id}"
+                )
+                deps.output(f"To stop it now: dropbear sessions stop {session_id}")
+            elif keep_warm_s > 0 and cleanup.disappeared and not cleanup.forced:
+                emit_error(
+                    deps.output,
+                    f"Dropbear session {session_id} ended instead of staying warm: "
+                    f"{cleanup.detail}",
+                    "The robot is closed. A later run may cold-start; send a support bundle to "
+                    "Dreamscale if this repeats",
+                )
+                exit_code = exit_code or 1
+            elif not cleanup.disappeared:
                 emit_error(
                     deps.output,
                     f"Dropbear session {session_id or 'unknown'} is still present: "

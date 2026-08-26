@@ -133,13 +133,22 @@ def test_shadow_inference_is_validated_never_executed_and_session_is_reused(
         doctor=lambda _rig: _ok_report(),
         confirm=lambda _prompt: True,
         embodiment=lambda _rig: embodiment,
-        policy=lambda _rig: policy,
+        policy=lambda _rig, **_kwargs: policy,
         evaluate=fake_eval,
-        cleanup=lambda session_id: CleanupResult(session_id, disappeared=True, forced=False),
+        cleanup=lambda session_id, **_kwargs: CleanupResult(
+            session_id, disappeared=True, forced=False
+        ),
         loading=lambda message: _record_context(loading, message),
     )
 
-    result = run("move the blue cup", rig, deps=deps, lock_path=lock, max_steps=2)
+    result = run(
+        "move the blue cup",
+        rig,
+        deps=deps,
+        lock_path=lock,
+        max_steps=2,
+        warm_minutes=0,
+    )
 
     assert result == 0
     assert policy.prepare_calls == 1
@@ -169,12 +178,21 @@ def test_run_closes_both_objects_and_forced_cleanup_exits_nonzero(
         doctor=lambda _rig: _ok_report(),
         confirm=lambda _prompt: True,
         embodiment=lambda _rig: embodiment,
-        policy=lambda _rig: policy,
+        policy=lambda _rig, **_kwargs: policy,
         evaluate=lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
-        cleanup=lambda session_id: CleanupResult(session_id, disappeared=True, forced=True),
+        cleanup=lambda session_id, **_kwargs: CleanupResult(
+            session_id, disappeared=True, forced=True
+        ),
     )
 
-    result = run("stop safely", rig, deps=deps, lock_path=lock, max_steps=1)
+    result = run(
+        "stop safely",
+        rig,
+        deps=deps,
+        lock_path=lock,
+        max_steps=1,
+        warm_minutes=0,
+    )
 
     assert result != 0
     assert embodiment.closed is True
@@ -186,9 +204,9 @@ def test_run_blocks_before_hardware_when_doctor_fails(rig, tmp_path: Path) -> No
         doctor=lambda _rig: DoctorReport(checks=(), forced_ok=False),
         confirm=lambda _prompt: (_ for _ in ()).throw(AssertionError("prompted")),
         embodiment=lambda _rig: (_ for _ in ()).throw(AssertionError("hardware opened")),
-        policy=lambda _rig: (_ for _ in ()).throw(AssertionError("session opened")),
+        policy=lambda _rig, **_kwargs: (_ for _ in ()).throw(AssertionError("session opened")),
         evaluate=lambda *_args, **_kwargs: None,
-        cleanup=lambda _session_id: CleanupResult(None, True, False),
+        cleanup=lambda _session_id, **_kwargs: CleanupResult(None, True, False),
     )
 
     assert run("blocked", rig, deps=deps, lock_path=tmp_path / "missing") != 0
@@ -255,14 +273,21 @@ def test_shadow_message_does_not_call_inference_paid(
         doctor=lambda _rig: _ok_report(),
         confirm=lambda _prompt: True,
         embodiment=lambda _rig: embodiment,
-        policy=lambda _rig: policy,
+        policy=lambda _rig, **_kwargs: policy,
         evaluate=lambda *_args, **_kwargs: [SimpleNamespace(status="success")],
-        cleanup=lambda session_id: CleanupResult(session_id, True, False),
+        cleanup=lambda session_id, **_kwargs: CleanupResult(session_id, True, False),
         output=output.append,
         loading=lambda message: _record_context([], message),
     )
 
-    assert run("move the blue cup", rig, deps=deps, lock_path=lock, max_steps=1) == 0
+    assert run(
+        "move the blue cup",
+        rig,
+        deps=deps,
+        lock_path=lock,
+        max_steps=1,
+        warm_minutes=0,
+    ) == 0
     shadow_line = next(line for line in output if "shadow inference" in line.lower())
     assert "paid" not in shadow_line.lower()
 
@@ -277,14 +302,21 @@ def test_run_failure_is_plain_and_actionable(rig, isolated_paths: Path, tmp_path
         doctor=lambda _rig: _ok_report(),
         confirm=lambda _prompt: True,
         embodiment=lambda _rig: embodiment,
-        policy=lambda _rig: policy,
+        policy=lambda _rig, **_kwargs: policy,
         evaluate=lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("camera unplugged")),
-        cleanup=lambda session_id: CleanupResult(session_id, True, False),
+        cleanup=lambda session_id, **_kwargs: CleanupResult(session_id, True, False),
         output=output.append,
         loading=lambda message: _record_context([], message),
     )
 
-    assert run("move the blue cup", rig, deps=deps, lock_path=lock, max_steps=1) == 1
+    assert run(
+        "move the blue cup",
+        rig,
+        deps=deps,
+        lock_path=lock,
+        max_steps=1,
+        warm_minutes=0,
+    ) == 1
     text = "\n".join(output)
     assert "Error: The run stopped before completion: camera unplugged" in text
     assert "Next:" in text
@@ -323,3 +355,79 @@ def test_cleanup_deletes_only_the_exact_owned_session(monkeypatch) -> None:
     assert result.disappeared is True
     assert result.forced is True
     assert client.deleted == ["session-owned"]
+
+
+def test_warm_cleanup_waits_for_exact_session_to_park_without_deleting(monkeypatch) -> None:
+    class Client:
+        def __init__(self, *_args):
+            self.polls = 0
+            self.deleted: list[str] = []
+
+        async def list_sessions(self):
+            self.polls += 1
+            status = "parking" if self.polls == 1 else "parked"
+            return [
+                {"session_id": "unrelated", "status": "active"},
+                {"session_id": "session-owned", "status": status},
+            ]
+
+        async def delete_session(self, session_id: str):
+            self.deleted.append(session_id)
+
+        async def close(self):
+            return None
+
+    client = Client()
+    monkeypatch.setattr(
+        "dropbear_yam.runner.load_config",
+        lambda: SimpleNamespace(api_key="hidden", control_plane_url="https://example.invalid"),
+    )
+    monkeypatch.setattr("dropbear_yam.runner.ControlPlaneClient", lambda *_args: client)
+
+    result = asyncio.run(_cleanup_async("session-owned", keep_warm_s=300, grace_s=1, poll_s=0))
+
+    assert result.parked is True
+    assert result.disappeared is False
+    assert result.forced is False
+    assert client.deleted == []
+
+
+def test_run_passes_requested_warm_hold_to_policy_and_cleanup(
+    rig, isolated_paths: Path, tmp_path: Path
+) -> None:
+    embodiment = FakeEmbodiment()
+    policy = FakePolicy()
+    requested: dict[str, int] = {}
+    output: list[str] = []
+    lock = tmp_path / "composition.lock.toml"
+    lock.write_text("commit='one'\n")
+
+    def policy_factory(_rig, *, keep_warm_s: int):
+        requested["policy"] = keep_warm_s
+        return policy
+
+    def cleanup(session_id: str | None, *, keep_warm_s: int):
+        requested["cleanup"] = keep_warm_s
+        return CleanupResult(session_id, disappeared=False, forced=False, parked=True)
+
+    deps = RunDependencies(
+        doctor=lambda _rig: _ok_report(),
+        confirm=lambda _prompt: True,
+        embodiment=lambda _rig: embodiment,
+        policy=policy_factory,
+        evaluate=lambda *_args, **_kwargs: [SimpleNamespace(status="success")],
+        cleanup=cleanup,
+        output=output.append,
+        loading=lambda message: _record_context([], message),
+    )
+
+    assert run(
+        "move the blue cup",
+        rig,
+        deps=deps,
+        lock_path=lock,
+        max_steps=1,
+        warm_minutes=5,
+    ) == 0
+    assert requested == {"policy": 300, "cleanup": 300}
+    assert any("5 minutes" in line and "warm" in line.lower() for line in output)
