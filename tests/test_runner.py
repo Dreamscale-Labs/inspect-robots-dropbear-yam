@@ -323,6 +323,98 @@ def test_run_failure_is_plain_and_actionable(rig, isolated_paths: Path, tmp_path
     assert "RuntimeError" not in text
 
 
+def test_run_surfaces_the_specific_inspect_failure(
+    rig, isolated_paths: Path, tmp_path: Path
+) -> None:
+    """Catch the regression where Inspect's exact error was replaced by a generic failure."""
+    embodiment = FakeEmbodiment()
+    policy = FakePolicy()
+    output: list[str] = []
+    lock = tmp_path / "composition.lock.toml"
+    lock.write_text("commit='one'\n")
+    deps = RunDependencies(
+        doctor=lambda _rig: _ok_report(),
+        confirm=lambda _prompt: True,
+        embodiment=lambda _rig: embodiment,
+        policy=lambda _rig, **_kwargs: policy,
+        evaluate=lambda *_args, **_kwargs: [
+            SimpleNamespace(
+                status="error",
+                error=(
+                    "SafetyAbort: strict policy action jump exceeds configured limit: left_j1"
+                ),
+            )
+        ],
+        cleanup=lambda session_id, **_kwargs: CleanupResult(session_id, True, False),
+        output=output.append,
+        loading=lambda message: _record_context([], message),
+    )
+
+    assert (
+        run(
+            "Pack container",
+            rig,
+            deps=deps,
+            lock_path=lock,
+            max_steps=1,
+            warm_minutes=0,
+        )
+        == 1
+    )
+    text = "\n".join(output)
+    assert (
+        "Error: The run stopped before completion: strict policy action jump exceeds "
+        "configured limit: left_j1."
+    ) in text
+    assert "Inspect Robots reported" not in text
+    assert "Keep the robot stopped" in text
+
+
+def test_run_prefers_scene_error_over_inspect_failure_threshold(
+    rig, isolated_paths: Path, tmp_path: Path
+) -> None:
+    embodiment = FakeEmbodiment()
+    policy = FakePolicy()
+    output: list[str] = []
+    lock = tmp_path / "composition.lock.toml"
+    lock.write_text("commit='one'\n")
+    deps = RunDependencies(
+        doctor=lambda _rig: _ok_report(),
+        confirm=lambda _prompt: True,
+        embodiment=lambda _rig: embodiment,
+        policy=lambda _rig, **_kwargs: policy,
+        evaluate=lambda *_args, **_kwargs: [
+            SimpleNamespace(
+                status="error",
+                error="fail_on_error threshold exceeded (1 errors)",
+                samples=(
+                    SimpleNamespace(
+                        error="PolicyError: camera frames were not accepted by the policy"
+                    ),
+                ),
+            )
+        ],
+        cleanup=lambda session_id, **_kwargs: CleanupResult(session_id, True, False),
+        output=output.append,
+        loading=lambda message: _record_context([], message),
+    )
+
+    assert (
+        run(
+            "Pack container",
+            rig,
+            deps=deps,
+            lock_path=lock,
+            max_steps=1,
+            warm_minutes=0,
+        )
+        == 1
+    )
+    text = "\n".join(output)
+    assert "camera frames were not accepted by the policy" in text
+    assert "threshold exceeded" not in text
+
+
 def test_cleanup_deletes_only_the_exact_owned_session(monkeypatch) -> None:
     class Client:
         def __init__(self, *_args):

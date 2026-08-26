@@ -344,6 +344,55 @@ def _run_shadow(
     _record_shadow(digest, getattr(policy, "session_id", None), action)
 
 
+def _inspect_error(logs: Any) -> str | None:
+    """Return Inspect's most specific recorded failure without its internal type name."""
+    for log in logs or ():
+        if getattr(log, "status", "error") == "success":
+            continue
+        # Policy errors are recorded on the scene while Inspect's top-level
+        # message only says that fail_on_error tripped. Prefer the cause.
+        detail = next(
+            (
+                sample.error
+                for sample in getattr(log, "samples", ())
+                if getattr(sample, "error", None)
+            ),
+            None,
+        )
+        if not detail:
+            detail = getattr(log, "error", None)
+        if detail:
+            text = str(detail).strip()
+            for prefix in ("SafetyAbort: ", "EmbodimentFault: ", "PolicyError: "):
+                if text.startswith(prefix):
+                    return text.removeprefix(prefix)
+            return text
+    return None
+
+
+def _failure_next_step(detail: str) -> str:
+    lowered = detail.lower()
+    if any(
+        marker in lowered
+        for marker in ("collision", "safety", "joint", "policy action jump", "bounds")
+    ):
+        return (
+            "Keep the robot stopped, check the scene and safety configuration, review the run "
+            "log under ~/.local/state/dropbear-yam/logs, and only start a new run when the cause "
+            "is understood"
+        )
+    if "camera" in lowered or "image" in lowered:
+        return (
+            "Check camera power and USB connections, close other camera programs, then rerun "
+            "./dropbear-yam doctor"
+        )
+    return (
+        "Review the run log under ~/.local/state/dropbear-yam/logs, then run ./dropbear-yam "
+        "doctor; if it passes and this repeats, run ./dropbear-yam doctor --support-bundle "
+        "~/dropbear-yam-support.tar.gz and send that file to Dreamscale"
+    )
+
+
 def run(
     instruction: str,
     rig: RigConfig,
@@ -452,34 +501,26 @@ def run(
                 fail_on_error=True,
             )
         if not logs or any(getattr(item, "status", "error") != "success" for item in logs):
-            emit_error(
-                deps.output,
-                "Inspect Robots reported that the task did not finish successfully",
-                "Keep the robot stopped, review the run log under "
-                "~/.local/state/dropbear-yam/logs, then rerun doctor before another attempt",
-            )
+            detail = _inspect_error(logs)
+            if detail:
+                emit_error(
+                    deps.output,
+                    f"The run stopped before completion: {detail}",
+                    _failure_next_step(detail),
+                )
+            else:
+                emit_error(
+                    deps.output,
+                    "Inspect Robots reported that the task did not finish successfully",
+                    "Keep the robot stopped, review the run log under "
+                    "~/.local/state/dropbear-yam/logs, then rerun doctor before another attempt",
+                )
             exit_code = 1
     except KeyboardInterrupt:
         deps.output("Operator stop received. Closing the YAM hardware and Dropbear session.")
         exit_code = 130
     except BaseException as exc:
-        lowered = str(exc).lower()
-        if "collision" in lowered or "safety" in lowered or "joint" in lowered:
-            next_step = (
-                "Keep the robot stopped, check the scene and safety configuration, and only start "
-                "a new run when the cause is understood"
-            )
-        elif "camera" in lowered or "image" in lowered:
-            next_step = (
-                "Check camera power and USB connections, close other camera programs, then rerun "
-                "./dropbear-yam doctor"
-            )
-        else:
-            next_step = (
-                "Run ./dropbear-yam doctor; if it passes and this repeats, run "
-                "./dropbear-yam doctor --support-bundle ~/dropbear-yam-support.tar.gz and send "
-                "that file to Dreamscale"
-            )
+        next_step = _failure_next_step(str(exc))
         emit_error(deps.output, f"The run stopped before completion: {exc}", next_step)
         exit_code = 1
     finally:
