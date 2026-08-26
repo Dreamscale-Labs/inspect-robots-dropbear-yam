@@ -81,6 +81,7 @@ class CloudProbe:
     entitled: bool
     target_available: bool
     sessions: tuple[str, ...] = ()
+    parked_sessions: tuple[str, ...] = ()
     detail: str = ""
 
 
@@ -165,13 +166,25 @@ async def _cloud_probe_async() -> CloudProbe:
     client = ControlPlaneClient(config.control_plane_url, config.api_key)
     try:
         candidates = await client.probe_candidates("dreamzero-yam")
-        sessions = await client.list_sessions()
-        session_ids = tuple(str(row.get("session_id")) for row in sessions if row.get("session_id"))
+        session_rows = await client.list_sessions()
+        parked_session_ids = tuple(
+            str(row["session_id"])
+            for row in session_rows
+            if row.get("session_id")
+            and row.get("model") == "dreamzero-yam"
+            and row.get("status") == "parked"
+        )
+        session_ids = tuple(
+            str(row["session_id"])
+            for row in session_rows
+            if row.get("session_id") and str(row["session_id"]) not in parked_session_ids
+        )
         return CloudProbe(
             authenticated=True,
             entitled=bool(candidates),
             target_available=bool(candidates),
             sessions=session_ids,
+            parked_sessions=parked_session_ids,
             detail=f"{len(candidates)} candidate target(s)",
         )
     except Exception as exc:
@@ -358,7 +371,7 @@ def _camera_checks(rig: RigConfig, deps: DoctorDependencies) -> list[Diagnostic]
         if skew_ms > CAMERA_SKEW_WARN_S * 1_000:
             checks.append(
                 _warn(
-                    "DBY-CAMERA-TIMESTAMPS",
+                "DBY-CAMERA-TIMESTAMPS",
                     summary,
                     "No action is required to continue. If this is much larger than usual, "
                     "close other camera programs, reconnect the cameras, and rerun doctor",
@@ -368,7 +381,7 @@ def _camera_checks(rig: RigConfig, deps: DoctorDependencies) -> list[Diagnostic]
         else:
             checks.append(
                 _pass(
-                "DBY-CAMERA-TIMESTAMPS",
+                    "DBY-CAMERA-TIMESTAMPS",
                     summary,
                     details,
                 )
@@ -514,16 +527,34 @@ def doctor(rig: RigConfig, *, deps: DoctorDependencies | None = None) -> DoctorR
             "of ./dropbear-yam doctor --json",
         )
     )
-    checks.append(
-        _pass("DBY-SESSION-CLEAR", "no existing Dropbear session")
-        if not cloud.sessions
-        else _fail(
-            "DBY-SESSION-CLEAR",
-            f"A Dropbear session is already running: {', '.join(cloud.sessions)}",
-            "Do not start another run. Stop or resolve the listed session first, then rerun "
-            "doctor; doctor will not stop it automatically",
+    if cloud.sessions:
+        checks.append(
+            _fail(
+                "DBY-SESSION-CLEAR",
+                f"A Dropbear session is already running: {', '.join(cloud.sessions)}",
+                "Do not start another run. Stop or resolve the listed session first, then rerun "
+                "doctor; doctor will not stop it automatically",
+            )
         )
-    )
+    elif len(cloud.parked_sessions) > 1:
+        checks.append(
+            _fail(
+                "DBY-SESSION-CLEAR",
+                "More than one warm DreamZero-YAM reservation exists: "
+                f"{', '.join(cloud.parked_sessions)}",
+                "Stop the extra exact sessions with `dropbear sessions stop <session-id>`, then "
+                "rerun doctor",
+            )
+        )
+    elif cloud.parked_sessions:
+        checks.append(
+            _pass(
+                "DBY-SESSION-CLEAR",
+                "one owned warm DreamZero-YAM reservation is parked and ready for reuse",
+            )
+        )
+    else:
+        checks.append(_pass("DBY-SESSION-CLEAR", "no existing Dropbear session"))
     return DoctorReport(tuple(checks))
 
 

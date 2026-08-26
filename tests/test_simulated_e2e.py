@@ -145,13 +145,14 @@ def test_fake_setup_doctor_shadow_gated_run_and_cleanup(
         rig,
         lock_path=lock,
         max_steps=1,
+        warm_minutes=0,
         deps=RunDependencies(
             doctor=lambda _rig: doctor(rig, deps=doctor_deps),
             confirm=lambda _prompt: True,
             embodiment=lambda _rig: embodiment,
-            policy=lambda _rig: policy,
+            policy=lambda _rig, **_kwargs: policy,
             evaluate=fake_eval,
-            cleanup=lambda session_id: CleanupResult(session_id, True, False),
+            cleanup=lambda session_id, **_kwargs: CleanupResult(session_id, True, False),
             output=output.append,
         ),
     )

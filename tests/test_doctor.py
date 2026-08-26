@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -11,12 +12,13 @@ from dropbear_yam.doctor import (
     CloudProbe,
     DoctorDependencies,
     _camera_probe,
+    _cloud_probe_async,
     create_support_bundle,
     doctor,
 )
 
 
-def _deps(rig, *, sessions=(), skew=0.01) -> DoctorDependencies:
+def _deps(rig, *, sessions=(), parked_sessions=(), skew=0.01) -> DoctorDependencies:
     now = time.time()
     return DoctorDependencies(
         system_name=lambda: "Linux",
@@ -37,6 +39,7 @@ def _deps(rig, *, sessions=(), skew=0.01) -> DoctorDependencies:
             entitled=True,
             target_available=True,
             sessions=tuple(sessions),
+            parked_sessions=tuple(parked_sessions),
         ),
         now=lambda: now,
     )
@@ -70,9 +73,7 @@ def test_doctor_warns_on_cross_camera_skew_without_blocking(rig) -> None:
 
 def test_doctor_passes_camera_skew_at_exactly_fifty_ms(rig) -> None:
     report = doctor(rig, deps=_deps(rig, skew=0.05))
-    timestamps = next(
-        check for check in report.checks if check.code == "DBY-CAMERA-TIMESTAMPS"
-    )
+    timestamps = next(check for check in report.checks if check.code == "DBY-CAMERA-TIMESTAMPS")
 
     assert report.ok is True
     assert timestamps.status == "pass"
@@ -86,6 +87,56 @@ def test_doctor_blocks_existing_session(rig) -> None:
     assert report.ok is False
     assert by_code["DBY-CAMERA-TIMESTAMPS"].status == "warn"
     assert by_code["DBY-SESSION-CLEAR"].status == "fail"
+
+
+def test_doctor_allows_one_owned_parked_yam_reservation(rig) -> None:
+    report = doctor(rig, deps=_deps(rig, parked_sessions=("session-warm",)))
+    check = next(check for check in report.checks if check.code == "DBY-SESSION-CLEAR")
+
+    assert report.ok is True
+    assert check.status == "pass"
+    assert "warm" in check.summary.lower()
+
+
+def test_doctor_blocks_multiple_parked_reservations(rig) -> None:
+    report = doctor(
+        rig,
+        deps=_deps(rig, parked_sessions=("session-warm-a", "session-warm-b")),
+    )
+    check = next(check for check in report.checks if check.code == "DBY-SESSION-CLEAR")
+
+    assert report.ok is False
+    assert check.status == "fail"
+
+
+def test_cloud_probe_separates_one_reclaimable_yam_reservation(monkeypatch) -> None:
+    class Client:
+        def __init__(self, *_args):
+            pass
+
+        async def probe_candidates(self, model: str):
+            assert model == "dreamzero-yam"
+            return [{"target": "yam"}]
+
+        async def list_sessions(self):
+            return [
+                {"session_id": "warm-yam", "model": "dreamzero-yam", "status": "parked"},
+                {"session_id": "busy-other", "model": "another-model", "status": "active"},
+            ]
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "dropbear_yam.doctor.load_config",
+        lambda: type("Config", (), {"api_key": "hidden", "control_plane_url": "url"})(),
+    )
+    monkeypatch.setattr("dropbear_yam.doctor.ControlPlaneClient", Client)
+
+    probe = asyncio.run(_cloud_probe_async())
+
+    assert probe.parked_sessions == ("warm-yam",)
+    assert probe.sessions == ("busy-other",)
 
 
 def test_support_bundle_redacts_nested_secrets(rig, tmp_path: Path) -> None:
@@ -172,9 +223,7 @@ def test_doctor_warns_but_does_not_block_when_collision_geometry_was_skipped(rig
     assert "setup --reconfigure" in geometry.remediation
 
 
-def test_real_camera_probe_uses_mixed_yam_reader_without_preparing_driver(
-    rig, monkeypatch
-) -> None:
+def test_real_camera_probe_uses_mixed_yam_reader_without_preparing_driver(rig, monkeypatch) -> None:
     import numpy as np
 
     from dropbear_yam.config import RigConfig
@@ -212,7 +261,5 @@ def test_real_camera_probe_uses_mixed_yam_reader_without_preparing_driver(
 
     probe = _camera_probe(mixed)
 
-    assert probe.shapes == {
-        name: (360, 640, 3) for name in ("top_cam", "left_cam", "right_cam")
-    }
+    assert probe.shapes == {name: (360, 640, 3) for name in ("top_cam", "left_cam", "right_cam")}
     assert calls == ["constructed", "closed"]

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from dropbear_yam.cli import _doctor_command, _parser, main
 from dropbear_yam.doctor import Diagnostic, DoctorReport
 
@@ -18,6 +20,39 @@ def test_run_defaults_to_two_minutes_at_30_hz() -> None:
     args = _parser().parse_args(["run", "Pack container"])
 
     assert args.max_steps == 3600
+
+
+def test_run_keeps_compute_warm_for_five_minutes_by_default() -> None:
+    args = _parser().parse_args(["run", "Pack container"])
+
+    assert args.warm == 5
+
+
+@pytest.mark.parametrize("minutes", [0, 1, 60])
+def test_run_accepts_bounded_whole_warm_minutes(minutes: int) -> None:
+    args = _parser().parse_args(["run", f"--warm={minutes}", "Pack container"])
+
+    assert args.warm == minutes
+
+
+@pytest.mark.parametrize("minutes", ["-1", "61", "1.5", "five"])
+def test_run_rejects_unusable_warm_minutes(minutes: str) -> None:
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["run", f"--warm={minutes}", "Pack container"])
+
+
+def test_cli_passes_warm_minutes_to_the_run(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(instruction, rig, **kwargs):
+        captured.update(instruction=instruction, rig=rig, **kwargs)
+        return 0
+
+    monkeypatch.setattr("dropbear_yam.cli.load_rig", lambda **_kwargs: "rig")
+    monkeypatch.setattr("dropbear_yam.cli.run", fake_run)
+
+    assert main(["run", "--warm=12", "Pack container"]) == 0
+    assert captured["warm_minutes"] == 12
 
 
 def test_cli_error_has_plain_message_and_next_step(monkeypatch, capsys) -> None:

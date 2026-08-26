@@ -14,6 +14,16 @@ from dropbear_yam.runner import run
 from dropbear_yam.setup_command import setup
 
 
+def _warm_minutes(value: str) -> int:
+    try:
+        minutes = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--warm must be a whole number from 0 to 60") from exc
+    if not 0 <= minutes <= 60:
+        raise argparse.ArgumentTypeError("--warm must be a whole number from 0 to 60")
+    return minutes
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dropbear-yam")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -30,6 +40,13 @@ def _parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--rig", help="named physical rig profile")
     run_parser.add_argument("instruction")
     run_parser.add_argument("--max-steps", type=int, default=3600)
+    run_parser.add_argument(
+        "--warm",
+        type=_warm_minutes,
+        default=5,
+        metavar="MINUTES",
+        help="keep this exact compute warm after the run (0-60; default: 5; billed)",
+    )
     run_parser.add_argument("--log-dir", type=Path)
     return parser
 
@@ -70,6 +87,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.instruction,
                 rig,
                 max_steps=args.max_steps,
+                warm_minutes=args.warm,
                 log_dir=args.log_dir,
             )
     except (OSError, ValueError, RuntimeError) as exc:
