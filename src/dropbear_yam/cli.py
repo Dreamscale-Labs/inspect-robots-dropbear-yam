@@ -7,6 +7,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from dropbear import errors as dropbear_errors
+from dropbear.quickstart import run_login
+
 from dropbear_yam.config import load_rig
 from dropbear_yam.doctor import create_support_bundle, doctor
 from dropbear_yam.errors import emit_error, explain_exception
@@ -32,6 +35,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     setup_parser.add_argument("--rig", help="named physical rig profile")
     setup_parser.add_argument("--reconfigure", action="store_true")
+    subcommands.add_parser("login", help="sign in to Dropbear for this YAM checkout")
     doctor_parser = subcommands.add_parser("doctor", help="motion-free, session-free checks")
     doctor_parser.add_argument("--rig", help="named physical rig profile")
     doctor_parser.add_argument("--json", action="store_true", dest="json_output")
@@ -79,6 +83,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "setup":
             setup(rig_name=args.rig, reconfigure=args.reconfigure)
             return 0
+        if args.command == "login":
+            run_login(print_next_steps=False)
+            print("Dropbear login complete. Next run:")
+            print("  ./dropbear-yam doctor")
+            return 0
         if args.command == "doctor":
             return _doctor_command(args.json_output, args.support_bundle, args.rig)
         if args.command == "run":
@@ -90,6 +99,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 warm_minutes=args.warm,
                 log_dir=args.log_dir,
             )
+    except dropbear_errors.DropbearError as exc:
+        rendered = exc.render().replace("next:  dropbear login", "next:  ./dropbear-yam login")
+        print(rendered, file=sys.stderr)
+        if args.command == "setup":
+            print(
+                "YAM rig configuration is saved; you will not need to choose devices again.",
+                file=sys.stderr,
+            )
+            print("Next: Run ./dropbear-yam login, then ./dropbear-yam doctor.", file=sys.stderr)
+        return 2
     except (OSError, ValueError, RuntimeError) as exc:
         message, next_step = explain_exception(exc)
         emit_error(lambda line: print(line, file=sys.stderr), message, next_step)
