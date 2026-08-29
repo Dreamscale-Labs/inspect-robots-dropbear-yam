@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -11,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from dropbear.config import load_config
+from dropbear.quickstart import run_login
 
 from dropbear_yam.config import (
     RigConfig,
@@ -215,13 +215,7 @@ def _authenticated() -> bool:
 
 
 def _login() -> None:
-    try:
-        subprocess.run(["dropbear", "login"], check=True)
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise UserFacingError(
-            f"Dropbear login did not finish: {exc}",
-            "Run `dropbear login` directly, complete sign-in, then rerun ./setup.sh",
-        ) from exc
+    run_login(print_next_steps=False)
 
 
 @dataclass
@@ -349,10 +343,10 @@ def setup(
                 "were kept."
             )
         load_rig(path)
+        deps.output(f"Rig already confirmed: {path}")
         if not deps.authenticated():
             deps.output("Dropbear credentials are absent; opening login.")
             deps.login()
-        deps.output(f"Rig already confirmed: {path}")
         return path
 
     cameras = deps.discover_cameras()
@@ -438,8 +432,8 @@ def setup(
         **geometry,
     )
     saved = save_rig(rig, path=path, replace=reconfigure)
+    deps.output(f"Confirmed rig written to {saved}")
     if not deps.authenticated():
         deps.output("Dropbear credentials are absent; opening login.")
         deps.login()
-    deps.output(f"Confirmed rig written to {saved}")
     return saved

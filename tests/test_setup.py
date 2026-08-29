@@ -4,10 +4,23 @@ from pathlib import Path
 
 import pytest
 import tomli_w
+from dropbear import errors as dropbear_errors
 
 from dropbear_yam.config import load_rig
 from dropbear_yam.errors import UserFacingError
-from dropbear_yam.setup_command import SetupDependencies, discover_cameras, setup
+from dropbear_yam.setup_command import SetupDependencies, _login, discover_cameras, setup
+
+
+def test_default_login_uses_the_locked_sdk_and_suppresses_generic_next_steps(monkeypatch) -> None:
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        "dropbear_yam.setup_command.run_login",
+        lambda *, print_next_steps: calls.append(print_next_steps),
+    )
+
+    _login()
+
+    assert calls == [False]
 
 
 def test_setup_prompts_only_for_unavoidable_assignments_and_geometry(isolated_paths: Path) -> None:
@@ -56,6 +69,42 @@ def test_setup_prompts_only_for_unavoidable_assignments_and_geometry(isolated_pa
     assert rig.collision_guardrail is True
     assert login_calls == [True]
     assert len(prompts) == 11
+
+
+def test_setup_reports_the_saved_rig_before_login_failure(isolated_paths: Path) -> None:
+    answers = iter(["1", "2", "3", "1", "2", "n"])
+    output: list[str] = []
+    failure = dropbear_errors.catalog("cli_login_start_failed", detail="HTTP 503")
+    deps = SetupDependencies(
+        discover_cameras=lambda: [
+            "/dev/v4l/by-id/cam-a",
+            "/dev/v4l/by-id/cam-b",
+            "/dev/v4l/by-id/cam-c",
+        ],
+        discover_can=lambda: ["can0", "can1"],
+        authenticated=lambda: False,
+        login=lambda: (_ for _ in ()).throw(failure),
+        input=lambda _prompt: next(answers),
+        output=output.append,
+    )
+
+    with pytest.raises(dropbear_errors.DropbearError):
+        setup(deps=deps)
+
+    assert load_rig().top_camera == "/dev/v4l/by-id/cam-a"
+    assert any(line.startswith("Confirmed rig written to ") for line in output)
+
+    recovered = setup(
+        deps=SetupDependencies(
+            discover_cameras=lambda: (_ for _ in ()).throw(AssertionError("rediscovered")),
+            discover_can=lambda: (_ for _ in ()).throw(AssertionError("rediscovered")),
+            authenticated=lambda: True,
+            login=lambda: (_ for _ in ()).throw(AssertionError("login repeated")),
+            input=lambda _prompt: (_ for _ in ()).throw(AssertionError("prompt repeated")),
+            output=lambda _line: None,
+        )
+    )
+    assert recovered.exists()
 
 
 def test_setup_explains_and_allows_skipping_collision_geometry(isolated_paths: Path) -> None:

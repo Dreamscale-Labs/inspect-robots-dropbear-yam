@@ -43,6 +43,9 @@ pass `--rig`. Existing confirmed values are kept. To deliberately replace it:
 ./dropbear-yam setup --reconfigure
 ```
 
+If browser sign-in is temporarily unavailable, the confirmed rig remains saved. Retry with
+`./dropbear-yam login`, then run `./dropbear-yam doctor`, without repeating camera or CAN selection.
+
 Camera discovery probes every color-capable V4L2 node; it does not assume that color is
 `video-index0`. It joins V4L2 and librealsense identities when Linux exposes a common USB port or
 RealSense serial; ambiguous duplicate serials are deliberately kept separate. It prefers

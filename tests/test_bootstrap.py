@@ -39,6 +39,8 @@ def test_readme_uses_the_customer_facing_stable_branch_without_a_rig_flag() -> N
     assert "[Y/n]" in readme
     assert "elapsed seconds" in readme
     assert "paid shadow inference" not in readme
+    assert "./dropbear-yam login" in readme
+    assert "without repeating camera or CAN selection" in readme
 
 
 def test_runtime_version_matches_installed_package_metadata() -> None:

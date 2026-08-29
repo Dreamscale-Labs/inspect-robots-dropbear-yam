@@ -502,7 +502,7 @@ def doctor(rig: RigConfig, *, deps: DoctorDependencies | None = None) -> DoctorR
             "DBY-AUTH",
             "Dropbear login could not be verified"
             + (f": {cloud.detail}" if cloud.detail else ""),
-            "Run `dropbear login`, complete sign-in, then rerun doctor",
+            "Run ./dropbear-yam login, complete sign-in, then rerun ./dropbear-yam doctor",
         )
     )
     checks.append(

@@ -89,6 +89,24 @@ def test_doctor_blocks_existing_session(rig) -> None:
     assert by_code["DBY-SESSION-CLEAR"].status == "fail"
 
 
+def test_doctor_auth_failure_uses_the_locked_composition_login_command(rig) -> None:
+    deps = _deps(rig)
+    deps.cloud_probe = lambda: CloudProbe(
+        authenticated=False,
+        entitled=False,
+        target_available=False,
+        sessions=(),
+        detail="missing credentials",
+    )
+
+    report = doctor(rig, deps=deps)
+    auth = next(check for check in report.checks if check.code == "DBY-AUTH")
+
+    assert auth.status == "fail"
+    assert "./dropbear-yam login" in auth.remediation
+    assert "`dropbear login`" not in auth.remediation
+
+
 def test_doctor_allows_one_owned_parked_yam_reservation(rig) -> None:
     report = doctor(rig, deps=_deps(rig, parked_sessions=("session-warm",)))
     check = next(check for check in report.checks if check.code == "DBY-SESSION-CLEAR")
