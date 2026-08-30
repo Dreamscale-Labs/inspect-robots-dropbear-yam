@@ -63,11 +63,11 @@ The interview asks only for facts software cannot safely infer:
 - Dropbear login, but only when credentials are absent.
 
 If you answer `n` to collision geometry, those measurements are omitted. The run still enforces
-the pinned joint bounds, finite 14-value actions, strict first/subsequent action-jump limits and
-fail-closed behavior. At a configured arm endpoint, the explicit projection described below keeps
-the command within that bound while recording the requested and applied values. It simply cannot
-predict arm/arm or arm/table contact from a geometric model. You can add geometry later with
-`./dropbear-yam setup --reconfigure`.
+the pinned joint bounds, finite 14-value actions and per-action movement limits. Every finite target
+is capped to the intersection of those limits and then continues; requested and applied values are
+recorded locally. Malformed actions and hardware failures still stop the run. Without geometry it
+simply cannot predict arm/arm or arm/table contact from a geometric model. You can add geometry
+later with `./dropbear-yam setup --reconfigure`.
 
 It writes `~/.config/dropbear-yam/rigs/default.toml` with permissions `0600`. The file contains no
 API key. Authentication remains in Dropbear's own config. To configure an additional physical
@@ -139,16 +139,16 @@ After that confirmation the program:
 1. opens cameras and I2RT once, performs required gripper calibration, and observes the real
    pre-home state without sending an arm pose;
 2. for a new configuration digest, blocks for exactly one real model chunk, validates its first
-   action against the measured pre-home state, and never executes that action (an expected initial
-   `async_latest` hold cannot satisfy this shadow check);
+   action through the same cap-and-continue projection against the measured pre-home state, and
+   never executes that action (an expected initial `async_latest` hold cannot satisfy this shadow
+   check);
 3. reuses the same hardware connection and, when shadow was needed, the same Dropbear session;
 4. retains the YAM fork's stand-clear homing prompt and scene-ready prompt;
-5. runs Inspect Robots programmatically with strict arm-action guards and, when configured,
-   predictive collision guards—no interpolation or hold substitution. Two explicit endpoint
-   backstops are operator-visible and recorded: raw continuous gripper overshoot projects to the
-   calibrated physical stroke, and an out-of-range arm target projects to its configured joint
-   endpoint before the 0.2-rad jump check. Malformed, non-finite, excessive-jump and collision
-   rejections still abort without sending; and
+5. runs Inspect Robots programmatically with a composition-owned action projection and, when
+   configured, predictive collision guards—no interpolation or hold substitution. Every finite
+   target is capped to the intersection of the configured joint bounds and the per-action movement
+   window before collision review. Malformed or non-finite actions, impossible references and
+   predicted collisions still abort without sending; and
 6. synchronously closes hardware and policy on success, abort, exception, signal or operator stop,
    then verifies that the exact owned Dropbear session parked when `--warm` is positive or
    disappeared when `--warm=0`.
@@ -160,7 +160,25 @@ stop-all operation.
 Shadow evidence is stored under `~/.local/state/dropbear-yam/shadow/`. Any change to the locked
 package commits, model target, camera/CAN mapping, rig geometry, cadence, joint bounds or step
 limits changes the digest and requires a new shadow. Shadow validates integration only; it is not a
-physical-safety or task-success claim. The strict abort chain remains active on every action.
+physical-safety or task-success claim. The strict YAM validator remains active as the
+hardware-facing backstop on every action.
+
+### Advanced: change the per-action caps
+
+The default cap is `0.2` radians for each arm joint and `1.0` normalized stroke for each gripper.
+Most users should keep it. An advanced operator can hand-edit `step_limits` in the confirmed rig
+TOML (normally `~/.config/dropbear-yam/rigs/default.toml`) using this packed order:
+
+```toml
+step_limits = [
+  0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 1.0,
+  0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 1.0,
+]
+```
+
+The values must be 14 finite positive numbers. Doctor reports the effective vector and warns—but
+does not block—when any value is above the recommended default. A change invalidates the previous
+shadow receipt automatically.
 
 While Dropbear compute is starting, the terminal shows a small loading symbol and elapsed seconds.
 The default episode cap is `--max-steps 3600`, which is 120 seconds at the fixed 30 Hz action

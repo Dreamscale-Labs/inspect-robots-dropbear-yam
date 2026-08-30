@@ -31,14 +31,42 @@ def test_rig_round_trip_is_fixed_attended_strict_30_hz(
     assert loaded.unattended is False
     assert loaded.keep_warm == 0
     assert loaded.strict_policy_actions is True
-    assert loaded.yam_kwargs()["strict_gripper_endpoint_projection"] is True
-    assert loaded.yam_kwargs()["strict_arm_endpoint_projection"] is True
+    assert "strict_gripper_endpoint_projection" not in loaded.yam_kwargs()
+    assert "strict_arm_endpoint_projection" not in loaded.yam_kwargs()
     assert loaded.joints_are_delta is False
     assert loaded.joint_low == I2RT_JOINT_LOW
     assert loaded.joint_high == I2RT_JOINT_HIGH
 
 
-def test_generated_bounds_accept_boundary_and_explicitly_project_arm_overshoot(
+def test_step_limits_accept_any_finite_positive_fourteen_value_vector(
+    rig: RigConfig, isolated_paths: Path
+) -> None:
+    limits = tuple(0.5 + index / 100 for index in range(14))
+    configured = RigConfig(**{**rig.as_dict(), "step_limits": limits})
+
+    path = save_rig(configured)
+
+    assert load_rig(path).step_limits == limits
+    assert configured.yam_kwargs()["step_limits"] == limits
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [
+        (0.2,) * 13,
+        (0.2,) * 13 + (0.0,),
+        (0.2,) * 13 + (-0.1,),
+        (0.2,) * 13 + (float("nan"),),
+        (0.2,) * 13 + (float("inf"),),
+        ("0.2",) * 14,
+    ],
+)
+def test_step_limits_reject_malformed_vectors(rig: RigConfig, limits: tuple[object, ...]) -> None:
+    with pytest.raises(ValueError, match="14 finite positive"):
+        RigConfig(**{**rig.as_dict(), "step_limits": limits})
+
+
+def test_generated_bounds_accept_boundary_and_strict_backstop_rejects_overshoot(
     rig: RigConfig,
 ) -> None:
     raw_low = np.asarray((-2.61799, 0.0, 0.0, -1.5708, -1.5708, -2.0944))
@@ -62,14 +90,12 @@ def test_generated_bounds_accept_boundary_and_explicitly_project_arm_overshoot(
 
     outside = np.tile(expected_arm_low, 2)
     outside[0] = np.nextafter(outside[0], -np.inf)
-    projected = embodiment.validate_policy_action(
-        Action(outside), reference=np.tile(expected_arm_low, 2)
-    )
-    assert projected[0] == expected_arm_low[0]
+    with pytest.raises(SafetyAbort, match=r"bounds.*left_j0"):
+        embodiment.validate_policy_action(Action(outside), reference=np.tile(expected_arm_low, 2))
 
     gross = np.tile(expected_arm_low, 2)
     gross[0] = 100.0
-    with pytest.raises(SafetyAbort, match=r"jump.*left_j0"):
+    with pytest.raises(SafetyAbort, match=r"bounds.*left_j0"):
         embodiment.validate_policy_action(Action(gross), reference=np.tile(expected_arm_low, 2))
 
 

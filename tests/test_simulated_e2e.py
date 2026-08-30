@@ -126,6 +126,7 @@ def test_fake_setup_doctor_shadow_gated_run_and_cleanup(
     )
     policy = FakeDropbearPolicy()
     eval_started_without_shadow_motion: list[bool] = []
+    applied_actions: list[Action] = []
     output: list[str] = []
 
     def fake_eval(task, active_policy, active_embodiment, **kwargs):
@@ -134,7 +135,11 @@ def test_fake_setup_doctor_shadow_gated_run_and_cleanup(
         observation = active_embodiment.reset(scene)
         active_policy.reset(scene)
         action = active_policy.act(replace(observation, extra={"env_step": 0})).actions[0]
+        requested = np.asarray(action.data).copy()
+        requested[0] += 0.25
+        action = Action(requested, action.meta)
         reviewed = kwargs["approver"].review(action, {})
+        applied_actions.append(reviewed)
         active_embodiment.step(reviewed)
         return [SimpleNamespace(status="success")]
 
@@ -159,6 +164,8 @@ def test_fake_setup_doctor_shadow_gated_run_and_cleanup(
 
     assert result == 0, output
     assert eval_started_without_shadow_motion == [True]
+    assert applied_actions[0].data[0] == pytest.approx(0.2)
+    assert applied_actions[0].meta["dropbear_yam_projected"] is True
     assert driver.commands
     assert driver.closed is True
     assert policy.closed is True

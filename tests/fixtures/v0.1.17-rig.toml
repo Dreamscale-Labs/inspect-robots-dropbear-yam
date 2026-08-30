@@ -1,0 +1,68 @@
+[rig]
+top_camera = "/dev/v4l/by-id/top-video-index0"
+left_camera = "/dev/v4l/by-id/left-video-index0"
+right_camera = "/dev/v4l/by-id/right-video-index0"
+left_channel = "can0"
+right_channel = "can1"
+schema_version = 2
+model_target = "dreamzero-yam"
+cam_width = 640
+cam_height = 360
+control_hz = 30
+control_interface = "joints"
+joints_are_delta = false
+gripper_type = "LINEAR_4310"
+joint_low = [
+    -2.7679899999999997,
+    -0.15,
+    -0.15,
+    -1.7207999999999999,
+    -1.7207999999999999,
+    -2.2443999999999997,
+    0.0,
+    -2.7679899999999997,
+    -0.15,
+    -0.15,
+    -1.7207999999999999,
+    -1.7207999999999999,
+    -2.2443999999999997,
+    0.0,
+]
+joint_high = [
+    3.20433,
+    3.8,
+    3.81519,
+    1.7207999999999999,
+    1.7207999999999999,
+    2.2443999999999997,
+    1.0,
+    3.20433,
+    3.8,
+    3.81519,
+    1.7207999999999999,
+    1.7207999999999999,
+    2.2443999999999997,
+    1.0,
+]
+step_limits = [
+    0.2,
+    0.2,
+    0.2,
+    0.2,
+    0.2,
+    0.2,
+    1.0,
+    0.2,
+    0.2,
+    0.2,
+    0.2,
+    0.2,
+    0.2,
+    1.0,
+]
+collision_guardrail = false
+collision_table = false
+auto_start = false
+unattended = false
+keep_warm = 0
+strict_policy_actions = true

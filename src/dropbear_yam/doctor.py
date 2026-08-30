@@ -24,6 +24,7 @@ from dropbear.control import ControlPlaneClient
 from dropbear_yam.config import (
     I2RT_JOINT_HIGH,
     I2RT_JOINT_LOW,
+    STRICT_STEP_LIMITS,
     RigConfig,
     stable_camera_source,
 )
@@ -457,6 +458,48 @@ def doctor(rig: RigConfig, *, deps: DoctorDependencies | None = None) -> DoctorR
             "Run ./dropbear-yam setup --reconfigure from this checkout",
         )
     )
+    relaxed_dimensions = [
+        index
+        for index, (configured, recommended) in enumerate(
+            zip(rig.step_limits, STRICT_STEP_LIMITS, strict=True)
+        )
+        if configured > recommended
+    ]
+    projection_details = {
+        "step_limits": list(rig.step_limits),
+        "recommended_step_limits": list(STRICT_STEP_LIMITS),
+        "above_recommended_indices": relaxed_dimensions,
+    }
+    effective_limits = ", ".join(f"{value:g}" for value in rig.step_limits)
+    if relaxed_dimensions:
+        checks.append(
+            _warn(
+                "DBY-ACTION-PROJECTION",
+                "Some per-action projection limits are above the recommended defaults; "
+                f"effective step_limits=[{effective_limits}]",
+                "No action is required to continue. Keep the run attended with the e-stop ready. "
+                "To restore the recommended values, hand-edit step_limits in the confirmed rig "
+                "TOML to 0.2 for arm joints and 1.0 for grippers, then rerun doctor",
+                projection_details,
+            )
+        )
+    else:
+        if rig.step_limits == STRICT_STEP_LIMITS:
+            projection_summary = (
+                "per-action projection is at 0.2 rad and one normalized gripper stroke"
+            )
+        else:
+            projection_summary = (
+                "per-action projection is at or below the recommended defaults; "
+                f"effective step_limits=[{effective_limits}]"
+            )
+        checks.append(
+            _pass(
+                "DBY-ACTION-PROJECTION",
+                projection_summary,
+                projection_details,
+            )
+        )
     if rig.collision_guardrail:
         checks.append(
             _pass(

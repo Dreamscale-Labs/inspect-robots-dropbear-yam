@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import os
 import re
 import tomllib
@@ -186,8 +187,20 @@ class RigConfig:
             )
         if self.joint_low != I2RT_JOINT_LOW or self.joint_high != I2RT_JOINT_HIGH:
             raise ValueError("joint bounds must match the pinned I2RT YAM model")
-        if self.step_limits != STRICT_STEP_LIMITS:
-            raise ValueError("strict step limits must be 0.2 rad and one gripper stroke")
+        try:
+            step_limits_valid = (
+                not isinstance(self.step_limits, (str, bytes))
+                and len(self.step_limits) == 14
+                and all(not isinstance(value, (bool, str, bytes)) for value in self.step_limits)
+                and all(
+                    math.isfinite(float(value)) and float(value) > 0
+                    for value in self.step_limits
+                )
+            )
+        except (TypeError, ValueError, OverflowError):
+            step_limits_valid = False
+        if not step_limits_valid:
+            raise ValueError("step_limits must contain exactly 14 finite positive values")
         devices = (self.top_camera, self.left_camera, self.right_camera)
         if any(not value for value in devices) or len(set(devices)) != 3:
             raise ValueError("three distinct camera role assignments are required")
@@ -222,15 +235,6 @@ class RigConfig:
             "auto_start": self.auto_start,
             "unattended": self.unattended,
             "strict_policy_actions": self.strict_policy_actions,
-            # DreamZero-YAM's raw continuous gripper outputs legitimately
-            # overshoot I2RT's normalized calibrated stroke. The fork projects
-            # only those two slots to physical endpoints and records the change.
-            "strict_gripper_endpoint_projection": True,
-            # Preserve the standard YAM joint-limit backstop explicitly: only
-            # an affected arm target is projected to its configured endpoint,
-            # requested/applied values are recorded, and the strict 0.2-rad
-            # jump abort still runs before any command.
-            "strict_arm_endpoint_projection": True,
         }
         if self.collision_guardrail:
             kwargs.update(

@@ -241,6 +241,29 @@ def test_doctor_warns_but_does_not_block_when_collision_geometry_was_skipped(rig
     assert "setup --reconfigure" in geometry.remediation
 
 
+def test_doctor_reports_default_action_projection_limits(rig) -> None:
+    report = doctor(rig, deps=_deps(rig))
+    projection = next(check for check in report.checks if check.code == "DBY-ACTION-PROJECTION")
+
+    assert projection.status == "pass"
+    assert projection.details["step_limits"] == pytest.approx(list(rig.step_limits))
+    assert "0.2 rad" in projection.summary
+    assert "one normalized gripper stroke" in projection.summary
+
+
+def test_doctor_warns_without_blocking_when_projection_limits_exceed_defaults(rig) -> None:
+    from dropbear_yam.config import RigConfig
+
+    relaxed = RigConfig(**{**rig.as_dict(), "step_limits": (0.5,) * 14})
+    report = doctor(relaxed, deps=_deps(relaxed))
+    projection = next(check for check in report.checks if check.code == "DBY-ACTION-PROJECTION")
+
+    assert report.ok is True
+    assert projection.status == "warn"
+    assert "above the recommended defaults" in projection.summary
+    assert "hand-edit" in projection.remediation
+
+
 def test_real_camera_probe_uses_mixed_yam_reader_without_preparing_driver(rig, monkeypatch) -> None:
     import numpy as np
 
