@@ -7,7 +7,7 @@ version = "0.1.18"
 [components.yam]
 package = "inspect-robots-yam"
 repository = "https://github.com/Dreamscale-Labs/inspect-robots-yam.git"
-commit = "3f0d41fb73fb38291897956092f9a80324615bcb"
+commit = "7e53ebdf34550d5c2b184a162b78f2e1cd7f259d"
 release = "v0.33.0+dreamscale.4"
 
 [components.adapter]
