@@ -172,6 +172,46 @@ def test_setup_is_idempotent_and_does_not_prompt_when_rig_exists(rig, isolated_p
     assert load_rig(expected) == rig
 
 
+def test_setup_preserves_advanced_step_limits_without_prompting(rig, isolated_paths: Path) -> None:
+    from dropbear_yam.config import RigConfig, save_rig
+
+    configured = RigConfig(**{**rig.as_dict(), "step_limits": (0.5,) * 14})
+    expected = save_rig(configured, profile="default")
+    deps = SetupDependencies(
+        discover_cameras=lambda: (_ for _ in ()).throw(AssertionError("discovery called")),
+        discover_can=lambda: (_ for _ in ()).throw(AssertionError("discovery called")),
+        authenticated=lambda: True,
+        login=lambda: (_ for _ in ()).throw(AssertionError("login called")),
+        input=lambda _prompt: (_ for _ in ()).throw(AssertionError("prompted")),
+        output=lambda _line: None,
+    )
+
+    assert setup(deps=deps) == expected
+    assert load_rig(expected).step_limits == (0.5,) * 14
+
+
+def test_v0117_rig_parses_and_setup_does_not_rewrite_or_prompt(isolated_paths: Path) -> None:
+    from dropbear_yam import config
+
+    fixture = Path(__file__).parent / "fixtures" / "v0.1.17-rig.toml"
+    expected = fixture.read_bytes()
+    path = config.rig_path("default")
+    path.parent.mkdir(parents=True)
+    path.write_bytes(expected)
+    deps = SetupDependencies(
+        discover_cameras=lambda: (_ for _ in ()).throw(AssertionError("discovery called")),
+        discover_can=lambda: (_ for _ in ()).throw(AssertionError("discovery called")),
+        authenticated=lambda: True,
+        login=lambda: (_ for _ in ()).throw(AssertionError("login called")),
+        input=lambda _prompt: (_ for _ in ()).throw(AssertionError("prompted")),
+        output=lambda _line: None,
+    )
+
+    assert load_rig(path).step_limits == config.STRICT_STEP_LIMITS
+    assert setup(deps=deps) == path
+    assert path.read_bytes() == expected
+
+
 def test_setup_migrates_generated_xml_bounds_without_reasking_for_rig_assignments(
     rig, isolated_paths: Path
 ) -> None:

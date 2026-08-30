@@ -22,11 +22,13 @@ from inspect_robots.approver import Approver, ChainApprover
 from inspect_robots.scene import Scene
 from inspect_robots.task import Task
 from inspect_robots.types import Action, Observation
+from inspect_robots_yam.packing import DIM_LABELS
 
 from dropbear_yam.config import RigConfig, state_home
 from dropbear_yam.doctor import DoctorReport
 from dropbear_yam.doctor import doctor as run_doctor
 from dropbear_yam.errors import emit_error
+from dropbear_yam.projection import ProjectionAudit, ProjectionEvent, YamProjectionApprover
 
 
 def default_lock_path() -> Path:
@@ -55,29 +57,54 @@ def _shadow_passed(digest: str) -> bool:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return False
     return bool(
-        payload.get("schema_version") == 1 and payload.get("configuration_digest") == digest
+        payload.get("schema_version") == 2 and payload.get("configuration_digest") == digest
     )
 
 
-def _record_shadow(digest: str, session_id: str | None, action: Action) -> Path:
+def _action_sha256(action: Action) -> str:
+    encoded = json.dumps(
+        [float(value) for value in action.data],
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _record_shadow(
+    digest: str,
+    session_id: str | None,
+    requested: Action,
+    applied: Action,
+) -> Path:
     path = shadow_path(digest)
     path.parent.mkdir(parents=True, exist_ok=True)
-    action_hash = hashlib.sha256(
-        json.dumps([float(value) for value in action.data], allow_nan=False).encode()
-    ).hexdigest()
+    projected = [
+        DIM_LABELS[index]
+        for index, (before, after) in enumerate(
+            zip(requested.data, applied.data, strict=True)
+        )
+        if float(before) != float(after)
+    ]
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "configuration_digest": digest,
         "validated_at": time.time(),
         "session_id": session_id,
-        "action_sha256": action_hash,
-        "action_source": action.meta.get("dropbear_action_source"),
+        "requested_action_sha256": _action_sha256(requested),
+        "applied_action_sha256": _action_sha256(applied),
+        "projected_dimensions": projected,
+        "action_source": requested.meta.get("dropbear_action_source"),
         "executed": False,
     }
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(temporary, path)
     return path
+
+
+def projection_path(log_dir: Path, digest: str) -> Path:
+    """Allocate one run-specific projection sidecar path."""
+    return log_dir / f"yam-projections-{digest[:12]}-{time.time_ns()}.jsonl"
 
 
 class NonRewritingApprover:
@@ -305,13 +332,21 @@ def _shadow_observation(observation: Observation) -> Observation:
     return replace(observation, extra={**dict(observation.extra), "env_step": 0})
 
 
-def _strict_approver(
+def _action_approver(
     embodiment: Any,
+    rig: RigConfig,
     *,
-    collision_guardrail_enabled: bool,
+    audit: Callable[[ProjectionEvent], None] | None,
 ) -> ChainApprover:
-    if not collision_guardrail_enabled:
-        return ChainApprover()
+    projection = YamProjectionApprover(
+        reference=embodiment.policy_action_reference,
+        joint_low=rig.joint_low,
+        joint_high=rig.joint_high,
+        step_limits=rig.step_limits,
+        audit=audit,
+    )
+    if not rig.collision_guardrail:
+        return ChainApprover(projection)
     contribution = embodiment.contribute_guardrails(embodiment.info.action_space)
     if contribution.warnings:
         raise RuntimeError("; ".join(contribution.warnings))
@@ -320,6 +355,7 @@ def _strict_approver(
             "Predictive collision checking was enabled, but its collision checker did not start"
         )
     return ChainApprover(
+        projection,
         *(NonRewritingApprover(approver) for _name, approver in contribution.approvers)
     )
 
@@ -329,19 +365,27 @@ def _run_shadow(
     observation: Observation,
     embodiment: Any,
     policy: Any,
+    rig: RigConfig,
     digest: str,
 ) -> None:
-    action = policy.predict_model_action(
+    requested = policy.predict_model_action(
         _shadow_observation(observation),
         instruction=instruction,
     )
-    if action.meta.get("dropbear_action_source") != "model":
+    if requested.meta.get("dropbear_action_source") != "model":
         raise RuntimeError("shadow inference did not return a model action")
     reference = observation.state.get("joint_pos")
     if reference is None:
         raise RuntimeError("prepared observation has no joint_pos reference")
-    embodiment.validate_policy_action(action, reference=reference)
-    _record_shadow(digest, getattr(policy, "session_id", None), action)
+    projection = YamProjectionApprover(
+        reference=lambda: reference,
+        joint_low=rig.joint_low,
+        joint_high=rig.joint_high,
+        step_limits=rig.step_limits,
+    )
+    applied = projection.project(requested, reference=reference)
+    embodiment.validate_policy_action(applied, reference=reference)
+    _record_shadow(digest, getattr(policy, "session_id", None), requested, applied)
 
 
 def _inspect_error(logs: Any) -> str | None:
@@ -456,17 +500,20 @@ def run(
 
     embodiment: Any | None = None
     policy: Any | None = None
+    projection_audit: ProjectionAudit | None = None
     session_id: str | None = None
     exit_code = 0
     try:
         embodiment = deps.embodiment(rig)
         policy = deps.policy(rig, keep_warm_s=keep_warm_s)
         prepared = embodiment.prepare_observation(instruction)
-        approver = _strict_approver(
-            embodiment,
-            collision_guardrail_enabled=rig.collision_guardrail,
-        )
         digest = configuration_digest(rig, lock_path)
+        resolved_log_dir = Path(log_dir or (state_home() / "logs"))
+        projection_audit = ProjectionAudit(
+            projection_path(resolved_log_dir, digest),
+            output=deps.output,
+        )
+        approver = _action_approver(embodiment, rig, audit=projection_audit.record)
         if not _shadow_passed(digest):
             deps.output("Running one non-commanding shadow inference for this configuration.")
             with deps.loading("Starting Dropbear compute (a cold start can take a few minutes)"):
@@ -475,7 +522,7 @@ def run(
                 # frames and joint state only after it is ready so the shadow
                 # request never sends the pre-start observation after it aged.
                 prepared = embodiment.prepare_observation(instruction)
-                _run_shadow(instruction, prepared, embodiment, policy, digest)
+                _run_shadow(instruction, prepared, embodiment, policy, rig, digest)
             deps.output(f"Shadow validation passed: {shadow_path(digest)}")
         else:
             deps.output("Shadow validation already passed for this exact configuration.")
@@ -493,7 +540,7 @@ def run(
                 task,
                 policy,
                 embodiment,
-                log_dir=str(log_dir or (state_home() / "logs")),
+                log_dir=str(resolved_log_dir),
                 approver=approver,
                 grader="operator",
                 store_frames=True,
@@ -588,4 +635,6 @@ def run(
                 exit_code = exit_code or 1
             else:
                 deps.output(f"Dropbear cleanup verified for {session_id or 'no session'}")
+        if projection_audit is not None:
+            projection_audit.summarize()
     return exit_code

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,10 +17,11 @@ from dropbear_yam.runner import (
     CleanupResult,
     NonRewritingApprover,
     RunDependencies,
+    _action_approver,
     _cleanup_async,
     _confirm,
     _loading_status,
-    _strict_approver,
+    _shadow_passed,
     configuration_digest,
     run,
     shadow_path,
@@ -38,6 +40,7 @@ class FakeEmbodiment:
         self.prepare_calls = 0
         self.closed = False
         self.info = SimpleNamespace(action_space=object())
+        self.reference = np.zeros(14)
 
     def prepare_observation(self, instruction: str) -> Observation:
         self.prepare_calls += 1
@@ -53,6 +56,9 @@ class FakeEmbodiment:
     def validate_policy_action(self, action: Action, *, reference) -> np.ndarray:
         self.validations.append((np.asarray(action.data), np.asarray(reference)))
         return np.asarray(action.data)
+
+    def policy_action_reference(self) -> np.ndarray:
+        return self.reference.copy()
 
     def contribute_guardrails(self, _space):
         return SimpleNamespace(approvers=(("yam-collision", IdentityApprover()),), warnings=())
@@ -70,6 +76,7 @@ class FakePolicy:
         self.predicted_observations: list[Observation] = []
         self.act_calls = 0
         self.closed = False
+        self.predicted_action = np.zeros(14)
 
     def prepare(self) -> None:
         self.prepare_calls += 1
@@ -90,7 +97,7 @@ class FakePolicy:
         self.predicted_observations.append(observation)
         assert instruction
         assert observation.extra["env_step"] == 0
-        return Action(np.zeros(14), {"dropbear_action_source": "model"})
+        return Action(self.predicted_action.copy(), {"dropbear_action_source": "model"})
 
     def close(self) -> None:
         self.closed = True
@@ -116,6 +123,7 @@ def test_shadow_inference_is_validated_never_executed_and_session_is_reused(
 ) -> None:
     embodiment = FakeEmbodiment()
     policy = FakePolicy()
+    policy.predicted_action[0] = 0.25
     eval_calls: list[dict[str, object]] = []
     loading: list[str] = []
     lock = tmp_path / "composition.lock.toml"
@@ -158,12 +166,91 @@ def test_shadow_inference_is_validated_never_executed_and_session_is_reused(
     assert policy.act_calls == 0
     assert [scene.id for scene in policy.reset_calls] == ["jay-attended"]
     assert len(embodiment.validations) == 1
+    assert embodiment.validations[0][0][0] == pytest.approx(0.2)
     assert embodiment.commands == []
     assert len(eval_calls) == 1
     assert embodiment.closed is True
     assert policy.closed is True
-    assert shadow_path(configuration_digest(rig, lock)).exists()
+    receipt = json.loads(
+        shadow_path(configuration_digest(rig, lock)).read_text(encoding="utf-8")
+    )
+    assert receipt["schema_version"] == 2
+    assert receipt["projected_dimensions"] == ["left_j0"]
+    assert receipt["requested_action_sha256"] != receipt["applied_action_sha256"]
+    assert receipt["executed"] is False
     assert loading == ["Starting Dropbear compute (a cold start can take a few minutes)"]
+
+
+def test_v1_shadow_receipt_is_invalidated(isolated_paths: Path) -> None:
+    path = shadow_path("digest")
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"schema_version": 1, "configuration_digest": "digest"}),
+        encoding="utf-8",
+    )
+
+    assert _shadow_passed("digest") is False
+
+
+def test_live_projection_caps_and_continues_with_local_audit(
+    rig, isolated_paths: Path, tmp_path: Path
+) -> None:
+    without_collision = type(rig)(
+        **{
+            **rig.as_dict(),
+            "collision_guardrail": False,
+            "collision_table": False,
+            "collision_left_base_pos": None,
+            "collision_right_base_pos": None,
+            "collision_left_base_yaw": None,
+            "collision_right_base_yaw": None,
+            "collision_table_height": None,
+        }
+    )
+    embodiment = FakeEmbodiment()
+    policy = FakePolicy()
+    output: list[str] = []
+    lock = tmp_path / "composition.lock.toml"
+    lock.write_text("commit='one'\n")
+    logs = tmp_path / "logs"
+
+    def fake_eval(_task, _policy, _embodiment, **kwargs):
+        requested = np.zeros(14)
+        requested[0] = 0.25
+        first = kwargs["approver"].review(Action(requested), {})
+        embodiment.commands.append(np.asarray(first.data).copy())
+        embodiment.reference = np.asarray(first.data).copy()
+        second = kwargs["approver"].review(Action(requested), {})
+        embodiment.commands.append(np.asarray(second.data).copy())
+        return [SimpleNamespace(status="success")]
+
+    result = run(
+        "move the blue cup",
+        without_collision,
+        deps=RunDependencies(
+            doctor=lambda _rig: _ok_report(),
+            confirm=lambda _prompt: True,
+            embodiment=lambda _rig: embodiment,
+            policy=lambda _rig, **_kwargs: policy,
+            evaluate=fake_eval,
+            cleanup=lambda session_id, **_kwargs: CleanupResult(session_id, True, False),
+            output=output.append,
+            loading=lambda message: _record_context([], message),
+        ),
+        lock_path=lock,
+        max_steps=2,
+        warm_minutes=0,
+        log_dir=logs,
+    )
+
+    assert result == 0
+    assert embodiment.commands[0][0] == pytest.approx(0.2)
+    assert embodiment.commands[1][0] == pytest.approx(0.25)
+    sidecars = list(logs.glob("yam-projections-*.jsonl"))
+    assert len(sidecars) == 1
+    assert len(sidecars[0].read_text(encoding="utf-8").splitlines()) == 1
+    assert sum("capped" in line.lower() for line in output) == 1
+    assert any("Projected 1 policy action" in line for line in output)
 
 
 def test_run_closes_both_objects_and_forced_cleanup_exits_nonzero(
@@ -255,10 +342,47 @@ def test_collision_approver_is_optional_but_action_validation_remains_strict(rig
         AssertionError("collision contribution should not be constructed")
     )
 
-    approver = _strict_approver(embodiment, collision_guardrail_enabled=False)
-    action = Action(np.zeros(14))
+    without_collision = type(rig)(
+        **{
+            **rig.as_dict(),
+            "collision_guardrail": False,
+            "collision_table": False,
+            "collision_left_base_pos": None,
+            "collision_right_base_pos": None,
+            "collision_left_base_yaw": None,
+            "collision_right_base_yaw": None,
+            "collision_table_height": None,
+        }
+    )
+    approver = _action_approver(embodiment, without_collision, audit=None)
+    requested = np.zeros(14)
+    requested[0] = 0.25
+    action = Action(requested)
 
-    assert approver.review(action, {}) is action
+    applied = approver.review(action, {})
+    assert applied.data[0] == pytest.approx(0.2)
+
+
+def test_collision_reviews_projected_action_and_remains_abort_only(rig) -> None:
+    seen: list[np.ndarray] = []
+
+    class CollisionApprover:
+        def review(self, action: Action, _store):
+            seen.append(np.asarray(action.data).copy())
+            raise RuntimeError("predicted collision")
+
+    embodiment = FakeEmbodiment()
+    embodiment.contribute_guardrails = lambda _space: SimpleNamespace(
+        approvers=(("yam-collision", CollisionApprover()),),
+        warnings=(),
+    )
+    requested = np.zeros(14)
+    requested[0] = 0.25
+
+    with pytest.raises(RuntimeError, match="predicted collision"):
+        _action_approver(embodiment, rig, audit=None).review(Action(requested), {})
+
+    assert seen[0][0] == pytest.approx(0.2)
 
 
 def test_shadow_message_does_not_call_inference_paid(
